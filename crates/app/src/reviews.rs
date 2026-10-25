@@ -29,6 +29,7 @@ pub struct Reviews {
     // Bumped whenever the states may have changed, so pages recolour.
     pub generation: u64,
     pub note: Option<String>,
+    pub sync_note: Option<String>,
     syncing: Option<Task<Result<(), GradeError>>>,
     progress: Arc<Mutex<(usize, usize)>>,
 }
@@ -41,6 +42,7 @@ impl Reviews {
             status: Status::Off,
             generation: 0,
             note: None,
+            sync_note: None,
             syncing: None,
             progress: Arc::default(),
         };
@@ -68,6 +70,7 @@ impl Reviews {
             return;
         };
         self.status = Status::Syncing;
+        self.sync_note = None;
         let (progress, waker) = (self.progress.clone(), ctx.clone());
         *progress.lock().unwrap_or_else(|e| e.into_inner()) = (0, 0);
         self.syncing = Some(Task::spawn(ctx, move || {
@@ -82,7 +85,10 @@ impl Reviews {
         if let Some(result) = task::take(&mut self.syncing) {
             self.generation += 1;
             self.status = match result {
-                Ok(()) => Status::Synced,
+                Ok(()) => {
+                    self.sync_note = self.grader.as_ref().and_then(|g| g.sync_note());
+                    Status::Synced
+                }
                 Err(e) => {
                     log::warn!("syncing reviews: {e}");
                     Status::Failed(e.to_string())
@@ -107,6 +113,7 @@ impl Reviews {
         match &self.status {
             Status::Off => format!("{name}: not set up"),
             Status::Syncing => format!("{name}: {}", self.syncing_text()),
+            Status::Synced if self.sync_note.is_some() => format!("{name}: no cards to grade found"),
             Status::Synced => format!("{name}: up to date"),
             Status::Failed(e) => format!("{name}: couldn't sync, {e}"),
         }

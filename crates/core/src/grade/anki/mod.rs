@@ -166,6 +166,16 @@ impl Grader for AnkiGrader {
         &[SUSPEND]
     }
 
+    // Grading needs the word's card, so finding none is the thing to know.
+    fn sync_note(&self) -> Option<String> {
+        (self.indexed() == 0).then(|| {
+            format!(
+                "No cards of note type {} in deck {}, so there's nothing to grade yet: choose the note type your cards there use, or add words from the reader.",
+                self.mapping.note_type, self.mapping.deck
+            )
+        })
+    }
+
     fn sync(&self, progress: &dyn Fn(usize, usize)) -> Result<(), GradeError> {
         self.check()?;
         progress(0, 1);

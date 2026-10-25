@@ -52,6 +52,11 @@ pub trait Grader: Send + Sync {
         &[]
     }
 
+    // A word on the sync, when something about it needs saying.
+    fn sync_note(&self) -> Option<String> {
+        None
+    }
+
     // Where the word can be seen on the service, as (label, url).
     fn link(&self, _word: &Word) -> Option<(&'static str, String)> {
         None

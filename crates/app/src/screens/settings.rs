@@ -211,6 +211,9 @@ pub fn status(ui: &mut egui::Ui, s: &Scheme, reviews: &Reviews, unsaved: bool) {
         }
         Status::Off => {}
     }
+    if let Some(note) = reviews.sync_note.as_ref().filter(|_| !unsaved) {
+        ui.label(RichText::new(note).font(font(text::BODY_SMALL)).color(c(s.error)));
+    }
     if let Some(note) = &reviews.note {
         ui.label(RichText::new(note).font(font(text::BODY_SMALL)).color(c(s.error)));
     }
