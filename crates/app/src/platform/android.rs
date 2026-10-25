@@ -3,10 +3,11 @@
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use jni::JNIEnv;
+use jni::NativeMethod;
 use jni::objects::{JIntArray, JObject, JString};
 use rubiyomi_core::grade::GradeError;
 use rubiyomi_core::grade::anki::{AnkiBackend, Note};
@@ -26,6 +27,12 @@ impl Android {
     pub fn new(app: AndroidApp) -> Arc<Self> {
         let me = Arc::new_cyclic(|me| Android { app, queue: Arc::new(EventQueue::default()), me: me.clone() });
         me.watch_events();
+        let _ = BACK_TO.set(Arc::downgrade(&me.queue));
+        me.with_activity("registerNatives", |env, a| {
+            let class = env.get_object_class(a)?;
+            let back = NativeMethod { name: "nativeBack".into(), sig: "()V".into(), fn_ptr: native_back as *mut std::ffi::c_void };
+            env.register_native_methods(&class, &[back])
+        });
         me
     }
 
@@ -105,6 +112,16 @@ impl Android {
                 }
             }
         });
+    }
+}
+
+// Android 16 gives the back gesture to a callback rather than as a key, and the
+// callback calls this at once, without waiting for the events to be polled.
+static BACK_TO: OnceLock<Weak<EventQueue>> = OnceLock::new();
+
+extern "system" fn native_back(_env: JNIEnv<'_>, _activity: JObject<'_>) {
+    if let Some(queue) = BACK_TO.get().and_then(Weak::upgrade) {
+        queue.push(PlatformEvent::Back);
     }
 }
 

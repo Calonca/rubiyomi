@@ -26,6 +26,26 @@ public class MainActivity extends NativeActivity {
     private final AnkiDroidBridge anki = new AnkiDroidBridge(this);
     private Secrets secrets;
 
+    // Registered from Rust once the native code is loaded.
+    private static native void nativeBack();
+
+    @Override
+    protected void onCreate(android.os.Bundle saved) {
+        super.onCreate(saved);
+        // Android 16 no longer sends apps that target it a back key: without this the gesture
+        // closes the app instead of going back a screen.
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, () -> {
+                    try {
+                        nativeBack();
+                    } catch (UnsatisfiedLinkError e) {
+                        moveTaskToBack(true);
+                    }
+                });
+        }
+    }
+
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);

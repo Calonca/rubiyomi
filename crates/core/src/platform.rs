@@ -11,6 +11,8 @@ pub enum PlatformEvent {
     Imported { path: PathBuf, name: String, temporary: bool },
     ImportFailed(String),
     Permission { granted: bool },
+    // The system's back gesture, where it doesn't come as a key.
+    Back,
 }
 
 pub type Insets = [f32; 4];

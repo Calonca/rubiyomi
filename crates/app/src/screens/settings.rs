@@ -25,14 +25,53 @@ enum Page {
     Reading,
 }
 
+// Where the reader was going when the dialog about unsaved changes came up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Leave {
+    Back,
+    Tab(usize),
+}
+
 #[derive(Default)]
 pub struct SettingsScreen {
     page: Page,
     form: ReviewsForm,
+    leaving: Option<Leave>,
+    // A tab to go to once the dialog is answered, for the app to take.
+    go_to: Option<usize>,
 }
 
 impl SettingsScreen {
-    pub fn back(&mut self) -> bool {
+    // Changes to the reviews that would be lost by leaving their page.
+    pub fn unsaved(&self, reviews: &Reviews) -> bool {
+        self.page == Page::Reviews && self.form.draft.reviews != ReviewSource::None && self.form.draft != reviews.settings
+    }
+
+    // Asks about unsaved changes first; says whether leaving has to wait for the answer.
+    pub fn ask_leave(&mut self, reviews: &Reviews, to: Leave) -> bool {
+        if !self.unsaved(reviews) {
+            return false;
+        }
+        self.leaving = Some(to);
+        true
+    }
+
+    pub fn take_tab(&mut self) -> Option<usize> {
+        self.go_to.take()
+    }
+
+    pub fn back(&mut self, reviews: &Reviews) -> bool {
+        if self.leaving.is_some() {
+            self.leaving = None;
+            return true;
+        }
+        if self.ask_leave(reviews, Leave::Back) {
+            return true;
+        }
+        self.go_back()
+    }
+
+    fn go_back(&mut self) -> bool {
         self.page = match self.page {
             Page::Main => return false,
             Page::Reviews | Page::Reading => Page::Main,
@@ -64,7 +103,10 @@ impl SettingsScreen {
             Page::Reading => "Page",
         };
         if m3::top_app_bar(ui, s, title, self.page != Page::Main) {
-            self.back();
+            self.back(reviews);
+        }
+        if self.leaving.is_some() {
+            self.leave_dialog(ui.ctx(), s, platform, reviews);
         }
         egui::CentralPanel::default().frame(super::surface(s)).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match self.page {
@@ -105,6 +147,47 @@ impl SettingsScreen {
             .clicked()
         {
             self.page = Page::About;
+        }
+    }
+
+    fn leave_dialog(&mut self, ctx: &egui::Context, s: &Scheme, platform: &dyn Platform, reviews: &mut Reviews) {
+        let mut answer = None;
+        let modal = egui::Modal::new(egui::Id::new("unsaved-reviews")).show(ctx, |ui| {
+            ui.set_width(320.0_f32.min(ctx.content_rect().width() - 48.0));
+            ui.label(RichText::new("Save changes?").font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Your reviews settings have changes that aren't saved yet.")
+                    .font(font(text::BODY_MEDIUM))
+                    .color(c(s.on_surface_variant)),
+            );
+            ui.add_space(16.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if m3::text_button(ui, s, "Save").clicked() {
+                    answer = Some(true);
+                }
+                if m3::text_button(ui, s, "Discard").clicked() {
+                    answer = Some(false);
+                }
+                if m3::text_button(ui, s, "Cancel").clicked() {
+                    self.leaving = None;
+                }
+            });
+        });
+        if modal.should_close() {
+            self.leaving = None;
+        }
+        let (Some(save), Some(to)) = (answer, self.leaving.take()) else { return };
+        if save {
+            reviews.apply(ctx, platform, self.form.draft.clone());
+        } else {
+            self.form = ReviewsForm::new(&reviews.settings);
+        }
+        match to {
+            Leave::Back => {
+                self.go_back();
+            }
+            Leave::Tab(i) => self.go_to = Some(i),
         }
     }
 

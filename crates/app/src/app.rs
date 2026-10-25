@@ -18,7 +18,7 @@ use crate::reviews::Reviews;
 use crate::screens::Ctx;
 use crate::screens::library::LibraryScreen;
 use crate::screens::reader::ReaderScreen;
-use crate::screens::settings::SettingsScreen;
+use crate::screens::settings::{Leave, SettingsScreen};
 use crate::screens::setup::Setup;
 use crate::screens::stats::StatsScreen;
 use crate::screens::words::WordsScreen;
@@ -175,6 +175,18 @@ impl App {
                     self.reviews.start(ctx, &*self.platform);
                 }
                 PlatformEvent::Permission { granted: false } => self.snackbar.show(ctx, "AnkiDroid access was refused"),
+                // Every screen listens for the back key, so the gesture becomes one.
+                PlatformEvent::Back => ctx.input_mut(|i| {
+                    if !i.key_pressed(egui::Key::BrowserBack) {
+                        i.events.push(egui::Event::Key {
+                            key: egui::Key::BrowserBack,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                    }
+                }),
             }
         }
         let dropped: Vec<PathBuf> =
@@ -252,7 +264,11 @@ impl App {
             return;
         }
         let sections = [(ICON_LOCAL_LIBRARY, "Library"), (ICON_DICTIONARY, "Words"), (ICON_INSIGHTS, "Stats"), (ICON_SETTINGS, "Settings")];
+        let before = self.section;
         m3::navigation_bar(ui, &s, &sections, &mut self.section);
+        if before == 3 && self.section != 3 && self.settings.ask_leave(&self.reviews, Leave::Tab(self.section)) {
+            self.section = 3;
+        }
         match self.section {
             0 => self.reader = self.shelf.ui(ui, &mut cx),
             1 => {
@@ -276,7 +292,10 @@ impl App {
             }
         }
         self.snackbar.ui(&ctx, &s, 80.0);
-        if ctx.input(|i| i.key_pressed(egui::Key::BrowserBack)) && !(self.section == 3 && self.settings.back()) {
+        if let Some(tab) = self.settings.take_tab() {
+            self.section = tab;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::BrowserBack)) && !(self.section == 3 && self.settings.back(&self.reviews)) {
             if self.section != 0 {
                 self.section = 0;
             } else if !self.platform.to_background() {
