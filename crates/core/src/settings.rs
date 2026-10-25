@@ -120,8 +120,8 @@ pub enum WordColours {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Typeface {
-    #[default]
     Serif,
+    #[default]
     Sans,
 }
 
@@ -150,14 +150,14 @@ impl Default for PageSettings {
         PageSettings {
             theme: PageTheme::System,
             vertical: false,
-            font_size: 24.0,
+            font_size: 28.0,
             line_height: 1.8,
             margin: 24.0,
             max_chars_per_line: 0,
-            typeface: Typeface::Serif,
+            typeface: Typeface::Sans,
             furigana: Furigana::Show,
             colours: WordColours::Text,
-            tap_to_turn: true,
+            tap_to_turn: false,
             keep_awake: false,
             show_percent: false,
         }

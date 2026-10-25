@@ -35,6 +35,15 @@ use popup::{Action, Content, Popup};
 const FOOTER: f32 = 28.0;
 // Longer than this without touching the page is not reading.
 const IDLE: f64 = 180.0;
+const SLIDE: f64 = 0.22;
+
+// The page left behind, sliding out while the new one slides in.
+struct Slide {
+    from: Page,
+    chapter: usize,
+    start: f64,
+    forward: bool,
+}
 
 fn family(t: Typeface) -> FontFamily {
     FontFamily::Name(
@@ -96,6 +105,7 @@ pub struct ReaderScreen {
     // Reading done since the stats were last written.
     pending: Day,
     seconds: f64,
+    slide: Option<Slide>,
 }
 
 impl ReaderScreen {
@@ -140,6 +150,7 @@ impl ReaderScreen {
             last_active: None,
             pending: Day::default(),
             seconds: 0.0,
+            slide: None,
         };
         reader.runs = reader.chapter_runs();
         Ok(reader)
@@ -175,34 +186,52 @@ impl ReaderScreen {
 
     fn turn(&mut self, cx: &mut Ctx<'_>, turn: Turn) {
         let library = cx.library;
-        self.popup = None;
-        self.mark = None;
-        if turn == Turn::Next
-            && let Some(page) = self.pages.get(self.page)
-        {
-            self.pending.chars += page.glyphs.iter().filter(|g| !g.text.trim().is_empty()).map(|g| g.len.max(1) as u64).sum::<u64>();
-        }
+        let from = self.pages.get(self.page).cloned();
+        let chapter = self.index;
+        let read = from
+            .as_ref()
+            .map_or(0, |page| page.glyphs.iter().filter(|g| !g.text.trim().is_empty()).map(|g| g.len.max(1) as u64).sum::<u64>());
         self.active();
-        self.flush(cx);
-        match turn {
-            Turn::Next if self.page + 1 < self.pages.len() => self.page += 1,
+        let moved = match turn {
+            Turn::Next if self.page + 1 < self.pages.len() => {
+                self.page += 1;
+                true
+            }
             Turn::Next if self.index + 1 < self.meta.chapters.len() => {
-                if self.load_chapter(library, self.index + 1) {
+                let loaded = self.load_chapter(library, self.index + 1);
+                if loaded {
                     self.want_offset = Some(0);
                 }
+                loaded
             }
-            Turn::Previous if self.page > 0 => self.page -= 1,
+            Turn::Previous if self.page > 0 => {
+                self.page -= 1;
+                true
+            }
             Turn::Previous if self.index > 0 => {
-                if self.load_chapter(library, self.index - 1) {
+                let loaded = self.load_chapter(library, self.index - 1);
+                if loaded {
                     // Its last page is known only once it is laid out.
                     self.want_last = true;
                     self.save_after_layout = true;
-                    return;
                 }
+                loaded
             }
-            _ => return,
+            _ => false,
+        };
+        if turn == Turn::Next && moved {
+            self.pending.chars += read;
         }
-        self.save(library);
+        self.flush(cx);
+        if !moved {
+            return;
+        }
+        self.popup = None;
+        self.mark = None;
+        self.slide = from.map(|from| Slide { from, chapter, start: self.now, forward: turn == Turn::Next });
+        if !self.save_after_layout {
+            self.save(library);
+        }
     }
 
     // Time counts from one touch of the page to the next, unless it was left alone too long.
@@ -424,8 +453,35 @@ impl ReaderScreen {
         let ctx = ui.ctx().clone();
         let p = cx.page.clone();
         let response = ui.interact(area, ui.id().with("page"), Sense::click_and_drag());
-        let origin = area.min + vec2(p.margin, p.margin);
+        let rest = area.min + vec2(p.margin, p.margin);
         let thickness = (p.font_size * 0.055).max(1.0);
+        let mut origin = rest;
+        if let Some(slide) = &self.slide {
+            let t = ((self.now - slide.start) / SLIDE).clamp(0.0, 1.0) as f32;
+            let eased = 1.0 - (1.0 - t).powi(3);
+            // Columns are read right to left, so a vertical book turns the other way.
+            let dir = if slide.forward != p.vertical { -1.0 } else { 1.0 };
+            let width = area.width();
+            origin = rest + vec2(-dir * (1.0 - eased) * width, 0.0);
+            let old = rest + vec2(dir * eased * width, 0.0);
+            let options = PaintOptions { family: family(p.typeface), text: c(s.on_surface), ruby: m3::alpha(c(s.on_surface), 0.8) };
+            if slide.chapter == self.index {
+                for img in &slide.from.images {
+                    if let Some(Block::Image(i)) = self.chapter.blocks.get(img.block)
+                        && let Some(t) = self.images.get(&i.file)
+                    {
+                        egui::Image::new(t).paint_at(ui, to_screen(old, &img.rect));
+                    }
+                }
+            }
+            let faint = |block: usize, run: usize| p.furigana == Furigana::Blur && !self.revealed.contains(&(block, run));
+            paint_page(ui.painter(), old, &slide.from, &options, |_| None, faint);
+            if t >= 1.0 {
+                self.slide = None;
+            } else {
+                ctx.request_repaint();
+            }
+        }
         if let Some(page) = self.pages.get(self.page).cloned() {
             for img in &page.images {
                 let file = match self.chapter.blocks.get(img.block) {
@@ -517,9 +573,9 @@ impl ReaderScreen {
             if self.popup.is_some() {
                 self.popup = None;
             } else if !self.bar
-                && let Some(offset) = self.glyph_at(p - origin)
+                && let Some(offset) = self.glyph_at(p - rest)
             {
-                self.look_up(cx, origin, offset);
+                self.look_up(cx, rest, offset);
             } else if self.bar || !edge || !cx.page.tap_to_turn {
                 self.bar = !self.bar;
             } else {
