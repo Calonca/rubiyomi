@@ -2,18 +2,34 @@
 
 ![Rubiyomi](art/icon-512.png)
 
-A simple app for reading Japanese books in EPUB.
+A simple app for reading Japanese books in EPUB, on Android and Linux.
 
-Load your EPUBs and start reading. Words are coloured by your cards on
-Anki or jpdb, so you see at a glance what you already know.
+**[Download the APK](https://github.com/Calonca/rubiyomi/releases/latest)**
 
-Read anywhere, even on a plane: the dictionary is already included, so
-with the offline sources the app needs no internet.
+## Features
 
-Tap any word for its reading and meanings, and grade or add its card
-without leaving the page. Vertical or horizontal text, page themes, and
-furigana shown, hidden or faint. The words you looked up are kept with their
-sentences, and your reading time, characters read and streak are counted.
+- **Your cards on the page.** Words are coloured by your cards on Anki
+  (AnkiDroid or AnkiConnect) or jpdb.io, so you see at a glance what you
+  already know.
+- **Tap a word** for its reading and meanings, and grade, add or suspend its
+  card without leaving the page. The card is placed so it doesn't cover the
+  sentence you're reading; tap another word to move it there, or the same
+  word to close it.
+- **Works offline.** The dictionary (JMdict, English) is included, and words
+  are found on the device. You can also have jpdb.io split the text, under
+  Settings → Parsing.
+- **Pages your way.** Vertical or horizontal text, serif or sans, text size
+  and line height, light, sepia, grey, dark, black and ocean themes, and
+  furigana shown, hidden or faint. Pages slide under your finger as you swipe;
+  on a computer the arrow keys turn them.
+- **Where you are.** A tap shows how far you are in the chapter and in the
+  book, and the library shows each book's cover with its progress. The app
+  reopens the last book where you left it.
+- **Reading stats.** Characters read, reading speed, words looked up,
+  chapters finished and unknown words, by day, week or month. A skip through a
+  chapter isn't counted as reading unless you say so.
+- **History.** The words you looked up are kept with their sentences.
+
 Nothing is collected: see [PRIVACY.md](PRIVACY.md).
 
 ## Building
