@@ -45,28 +45,10 @@ pub struct PaintOptions {
     pub ruby: Color32,
 }
 
-// Each word sits on a wash in the colour of its card, given by `word` as the
-// word's start and colour. One box per word per line: glyph by glyph, the
-// boxes would overlap and darken at the seams.
-pub fn paint_page(painter: &Painter, origin: Pos2, page: &Page, o: &PaintOptions, word: impl Fn(usize) -> Option<(usize, Color32)>) {
-    let mut wash: Option<(usize, Color32, egui::Rect)> = None;
-    let flush = |w: Option<(usize, Color32, egui::Rect)>| {
-        if let Some((_, colour, rect)) = w {
-            painter.rect_filled(rect.expand2(vec2(1.0, 1.0)), 3.0, colour.gamma_multiply(0.22));
-        }
-    };
-    for g in page.glyphs.iter().filter(|g| !g.text.trim().is_empty()) {
-        let r = to_screen(origin, &g.rect);
-        match (word(g.offset), &mut wash) {
-            (Some((start, _)), Some((at, _, rect))) if *at == start && (rect.center().y - r.center().y).abs() < r.height() / 2.0 => {
-                *rect = rect.union(r);
-            }
-            (here, _) => flush(std::mem::replace(&mut wash, here.map(|(start, colour)| (start, colour, r)))),
-        }
-    }
-    flush(wash);
+// Each word is drawn in the colour of its card.
+pub fn paint_page(painter: &Painter, origin: Pos2, page: &Page, o: &PaintOptions, ink: impl Fn(usize) -> Option<Color32>) {
     for g in &page.glyphs {
-        paint_glyph(painter, origin, g, &o.family, o.text);
+        paint_glyph(painter, origin, g, &o.family, ink(g.offset).unwrap_or(o.text));
     }
     for r in &page.ruby {
         let rect = to_screen(origin, &r.rect);
