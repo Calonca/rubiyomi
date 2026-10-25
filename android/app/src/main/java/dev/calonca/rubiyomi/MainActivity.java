@@ -26,6 +26,40 @@ public class MainActivity extends NativeActivity {
     private final AnkiDroidBridge anki = new AnkiDroidBridge(this);
     private Secrets secrets;
 
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            fullScreen();
+        }
+    }
+
+    // The bars stay hidden; a swipe from the edge shows them for a moment over the app.
+    @SuppressWarnings("deprecation")
+    private void fullScreen() {
+        android.view.Window window = getWindow();
+        if (Build.VERSION.SDK_INT >= 28) {
+            window.getAttributes().layoutInDisplayCutoutMode =
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false);
+            android.view.WindowInsetsController c = window.getInsetsController();
+            if (c != null) {
+                c.hide(WindowInsets.Type.systemBars());
+                c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            window.getDecorView().setSystemUiVisibility(
+                android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+    }
+
     public void pickEpub() {
         runOnUiThread(() -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -114,7 +148,7 @@ public class MainActivity extends NativeActivity {
         return mode == Configuration.UI_MODE_NIGHT_YES;
     }
 
-    // Android 15 draws apps edge to edge; Rust keeps clear of the bars with these.
+    // The app draws under the bars and the cutout; Rust keeps clear of them with these.
     public int[] insets() {
         WindowInsets insets = getWindow().getDecorView().getRootWindowInsets();
         if (insets == null) {
@@ -124,10 +158,18 @@ public class MainActivity extends NativeActivity {
             android.graphics.Insets i = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
             return new int[] {i.left, i.top, i.right, i.bottom};
         }
-        return new int[] {
+        int[] out = {
             insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
             insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom()
         };
+        if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
+            android.view.DisplayCutout cut = insets.getDisplayCutout();
+            out[0] = Math.max(out[0], cut.getSafeInsetLeft());
+            out[1] = Math.max(out[1], cut.getSafeInsetTop());
+            out[2] = Math.max(out[2], cut.getSafeInsetRight());
+            out[3] = Math.max(out[3], cut.getSafeInsetBottom());
+        }
+        return out;
     }
 
     public boolean openUrl(String url) {

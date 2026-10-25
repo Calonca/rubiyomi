@@ -71,12 +71,12 @@ mod tests {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PageTheme {
-    #[default]
     System,
     Light,
     Sepia,
     Grey,
     Dark,
+    #[default]
     Black,
     Ocean,
 }
@@ -148,7 +148,7 @@ pub struct PageSettings {
 impl Default for PageSettings {
     fn default() -> Self {
         PageSettings {
-            theme: PageTheme::System,
+            theme: PageTheme::Black,
             vertical: false,
             font_size: 28.0,
             line_height: 1.8,
