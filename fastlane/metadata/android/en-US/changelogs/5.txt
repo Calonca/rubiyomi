@@ -1,0 +1,4 @@
+• Page settings: themes, text size, spacing, margins, line length, typeface, furigana, vertical text
+• A list of the words you looked up, searchable
+• Reading stats: time, characters, streak
+• With Anki, the word card offers Suspend

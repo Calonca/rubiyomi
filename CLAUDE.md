@@ -16,8 +16,11 @@ Rust + egui reader for Japanese books, Linux and Android.
   the Android Keystore (desktop: the Secret Service, through keyring-core).
 - `xtask` — `cargo xtask dict` builds the bundled dictionaries into
   `dist/dict/` (JMdict release pinned with its checksum in `xtask/src/main.rs`;
-  bump it to the newest jmdict-simplified English release before each
-  release). The APK build needs them; desktop builds find them there.
+  `tool/bump-jmdict.sh` moves it to the newest jmdict-simplified English
+  release, and the monthly `jmdict.yml` workflow opens a PR doing that). The
+  APK build needs them; desktop builds find them there.
+- `fastlane/metadata/android/en-US` — the Play Store texts; `PRIVACY.md` the
+  privacy policy. Keep them true to what the app does.
 - `art/` — the icon source (`icon.svg`) and the 512 px store icon.
 
 ## Building
@@ -29,6 +32,9 @@ Run builds through `slotq` (APK: `--cpus 6 --mem 6G`).
   `tool/android-build.sh fast` for the APK (the default; cargo-ndk, then
   Gradle; APK in `android/app/build/outputs/apk/debug/`). `--release` only for
   a build to hand out or for performance measurements.
+- `tool/android-build.sh release` — signed APK plus AAB, with the upload key
+  from `android/keystore.properties` or `RUBIYOMI_KEYSTORE*`; never commit a
+  key. A `v*` tag runs `release.yml` with the key from the repo's secrets.
 - `cargo test --workspace --profile fast` — the tests; `tool/check.sh` runs
   all of CI's checks locally.
 - `tool/icon.py ZenOldMincho-Bold.ttf` regenerates the launcher icon layers and

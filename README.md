@@ -10,7 +10,11 @@ Anki or jpdb, so you see at a glance what you already know.
 Read anywhere, even on a plane: the dictionary is already included, so
 with the offline sources the app needs no internet.
 
-Early version: the app's sections are in place, and books come next.
+Tap any word for its reading and meanings, and grade or add its card
+without leaving the page. Vertical or horizontal text, page themes, and
+furigana shown, hidden or faint. The words you looked up are kept with their
+sentences, and your reading time, characters read and streak are counted.
+Nothing is collected: see [PRIVACY.md](PRIVACY.md).
 
 ## Building
 
@@ -21,6 +25,12 @@ tool/android-build.sh             # APK, in android/app/build/outputs/apk/debug/
 ```
 
 The APK needs the Android SDK, NDK 28 and `cargo-ndk`.
+
+`tool/android-build.sh release` builds the signed APK and the Play Store
+bundle. The upload key stays outside the repository: point
+`android/keystore.properties` at it (see `keystore.properties.example`) or set
+the `RUBIYOMI_KEYSTORE*` variables. A `v*` tag builds both on GitHub, with
+the key from the repository's secrets, into a draft release.
 
 ## Licence
 

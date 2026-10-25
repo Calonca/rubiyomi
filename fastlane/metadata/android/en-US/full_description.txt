@@ -1,0 +1,14 @@
+Rubiyomi is a reader for Japanese books in EPUB.
+
+Add your EPUBs and start reading. Tap any word to see its reading and meanings: the dictionary (JMdict, English) is on your phone, so it works offline, even on a plane.
+
+• Furigana from the book, shown, hidden, or faint until you look a word up
+• Vertical or horizontal text, seven page themes, text size, spacing and margins
+• Words coloured by your cards on jpdb.io or Anki (AnkiDroid on the phone), so you see at a glance what you already know
+• Grade, add or suspend a card right from the word card, with the sentence it came from
+• Every word you looked up, searchable, with its sentence and a jump back into the book
+• Reading time, characters read and a daily streak
+
+No account, no ads, no tracking. Your books and notes stay on your device; Rubiyomi talks to jpdb.io or Anki only if you set them up.
+
+Rubiyomi is free software under the MIT licence. It uses the JMdict/EDICT dictionary files, the property of the Electronic Dictionary Research and Development Group, used in conformance with the Group's licence (CC BY-SA 4.0).
