@@ -40,6 +40,7 @@ pub struct App {
     loading: Option<Task<Result<Finder, String>>>,
     finder: Result<Arc<Finder>, String>,
     reviews: Reviews,
+    words_tag: Option<String>,
     page: PageSettings,
     history: History,
     stats: Stats,
@@ -77,6 +78,7 @@ impl App {
             page.open_last_on_launch.then(|| library.last_read()).flatten().and_then(|(meta, _)| {
                 ReaderScreen::open(&library, meta, None).map_err(|e| log::warn!("reopening the last book: {e}")).ok()
             });
+        let words_tag = dicts.installed().map(|v| rubiyomi_core::finder::words_tag(&v));
         App {
             reopening: reader.is_some().then_some(launched),
             page,
@@ -98,6 +100,7 @@ impl App {
             dicts,
             loading: Some(loading),
             finder: Err("Preparing the dictionary…".into()),
+            words_tag,
             reviews,
         }
     }
@@ -127,6 +130,7 @@ impl App {
                 log::warn!("word finder: {e}");
             }
             self.finder = result.map(Arc::new);
+            self.words_tag = self.dicts.installed().map(|v| rubiyomi_core::finder::words_tag(&v));
         } else if self.loading.is_some()
             && let DictState::Unpacking(step) = self.dicts.state()
         {
@@ -223,6 +227,7 @@ impl App {
             finder: self.finder.as_ref().map_err(String::as_str),
             grader: self.reviews.grader.as_ref(),
             generation: self.reviews.generation,
+            words_tag: self.words_tag.as_deref(),
             page: &mut self.page,
             history: &mut self.history,
             stats: &mut self.stats,

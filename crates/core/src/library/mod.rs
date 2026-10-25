@@ -186,6 +186,19 @@ impl Library {
         read_json(&path)
     }
 
+    // The words found in a chapter, if they were saved with the same `tag`.
+    pub fn cached_words(&self, id: &BookId, index: usize, tag: &str) -> Option<Vec<crate::finder::Word>> {
+        let saved: SavedWords = read_json(&words_path(&self.book_dir(id), index))?;
+        (saved.tag == tag).then_some(saved.words)
+    }
+
+    pub fn cache_words(&self, id: &BookId, index: usize, tag: &str, words: &[crate::finder::Word]) {
+        let saved = SavedWords { tag: tag.to_owned(), words: words.to_vec() };
+        if let Err(e) = write_json(&words_path(&self.book_dir(id), index), &saved) {
+            log::warn!("saving a chapter's words: {e}");
+        }
+    }
+
     pub fn reextract(&self, id: &BookId) -> Result<Imported, ImportError> {
         let bytes = std::fs::read(self.book_dir(id).join("book.epub"))?;
         self.import_inner(bytes, true)
@@ -223,6 +236,16 @@ impl Library {
             .max_by_key(|(p, _)| p.updated)
             .map(|(p, m)| (m, p))
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedWords {
+    tag: String,
+    words: Vec<crate::finder::Word>,
+}
+
+fn words_path(book_dir: &Path, index: usize) -> PathBuf {
+    book_dir.join("words").join(format!("{index:04}.json"))
 }
 
 fn chapter_path(book_dir: &Path, index: usize) -> PathBuf {

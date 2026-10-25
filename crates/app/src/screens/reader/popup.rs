@@ -223,6 +223,13 @@ impl Popup {
             action = Some(Action::Open(url));
         }
         let Some(g) = grader.filter(|_| word.jmdict_id.is_some()) else { return action };
+        // Which service the rest acts on, as a deck can carry another's name.
+        let on = match g.deck_name() {
+            Some(deck) => format!("{} · deck {deck}", g.name()),
+            None => g.name().to_owned(),
+        };
+        ui.add_space(6.0);
+        ui.label(RichText::new(on).size(11.0).color(c(s.on_surface_variant)));
         if let Some(deck) = g.deck_name()
             && option_tile(ui, s, ICON_ADD, &format!("Add to {deck}"), !self.busy)
         {

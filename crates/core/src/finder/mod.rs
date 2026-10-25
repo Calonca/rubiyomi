@@ -10,13 +10,24 @@ use lindera::dictionary::load_fs_dictionary;
 use lindera::mode::Mode;
 use lindera::segmenter::Segmenter;
 
+use serde::{Deserialize, Serialize};
+
 use crate::cards::WordKey;
 use crate::dict::jmdict::{Entry, Jmdict};
 use crate::dict::{DictState, DictStore};
 use crate::kana::{is_katakana, to_hiragana};
 use merge::{Merged, Morph, merge};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+// Bumped whenever `Finder::words` would split a text differently, so saved words are found again.
+const WORDS_FORMAT: u32 = 1;
+
+// What saved words were found with: the extractor, this finder and its dictionaries.
+pub fn words_tag(dict: &crate::dict::DictVersion) -> String {
+    format!("{}-{WORDS_FORMAT}-{}-{}", crate::library::EXTRACT_VERSION, dict.jmdict, dict.ipadic)
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Word {
     pub start: usize,
     pub len: usize,
@@ -40,6 +51,25 @@ pub struct Finder {
 }
 
 impl Finder {
+    // Every word of a chapter, at chapter offsets, without meanings: what the
+    // reader colours and saves.
+    pub fn chapter_words(&self, chapter: &crate::text::Chapter) -> Vec<Word> {
+        let mut all = Vec::new();
+        let mut start = 0;
+        for b in &chapter.blocks {
+            if let Some(t) = b.as_text() {
+                all.extend(self.words(&t.text).into_iter().map(|mut w| {
+                    w.start += start;
+                    w.meanings = Vec::new();
+                    w.pos = Vec::new();
+                    w
+                }));
+            }
+            start += b.char_len();
+        }
+        all
+    }
+
     pub fn open(store: &DictStore) -> Result<Self, String> {
         match store.state() {
             DictState::Ready(_) => {}

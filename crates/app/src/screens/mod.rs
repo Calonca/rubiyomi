@@ -31,6 +31,8 @@ pub struct Ctx<'a> {
     pub finder: Result<&'a Arc<Finder>, &'a str>,
     pub grader: Option<&'a Arc<dyn Grader>>,
     pub generation: u64,
+    // What saved chapter words must have been found with to be used.
+    pub words_tag: Option<&'a str>,
     pub page: &'a mut PageSettings,
     pub history: &'a mut History,
     pub stats: &'a mut Stats,

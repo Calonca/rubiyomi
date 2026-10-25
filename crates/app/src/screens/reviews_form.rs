@@ -221,9 +221,16 @@ impl ReviewsForm {
         match &self.fields {
             Some((t, Ok(fields))) if *t == m.note_type => {
                 combo(ui, "anki-word", "Word field", &mut m.word_field, fields, false);
-                combo(ui, "anki-reading", "Reading field", &mut m.reading_field, fields, true);
-                combo(ui, "anki-meaning", "Meaning field", &mut m.meaning_field, fields, true);
-                combo(ui, "anki-sentence", "Sentence field", &mut m.sentence_field, fields, true);
+                // The word's own field can't take anything else.
+                let others: Vec<String> = fields.iter().filter(|f| **f != m.word_field).cloned().collect();
+                for field in [&mut m.reading_field, &mut m.meaning_field, &mut m.sentence_field] {
+                    if *field == m.word_field {
+                        field.clear();
+                    }
+                }
+                combo(ui, "anki-reading", "Reading field", &mut m.reading_field, &others, true);
+                combo(ui, "anki-meaning", "Meaning field", &mut m.meaning_field, &others, true);
+                combo(ui, "anki-sentence", "Sentence field", &mut m.sentence_field, &others, true);
             }
             Some((_, Err(e))) => {
                 ui.label(RichText::new(e).color(c(s.error)));

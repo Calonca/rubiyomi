@@ -127,6 +127,8 @@ fn grader(platform: &dyn Platform, settings: &Settings) -> Option<Arc<dyn Grader
             &settings.jpdb_deck_name,
             &platform.data_dir(),
         ))),
-        ReviewSource::Anki => Some(Arc::new(AnkiGrader::new(anki_backend(platform, settings), settings.anki.clone()))),
+        ReviewSource::Anki => {
+            Some(Arc::new(AnkiGrader::new(anki_backend(platform, settings), settings.anki.clone()).saved_in(&platform.data_dir())))
+        }
     }
 }

@@ -21,7 +21,11 @@ fn load(path: &str, index: u32) -> Option<Face> {
     if let Some(bytes) = cache.get(path) {
         return Some(Face { bytes, index });
     }
-    let bytes: &'static [u8] = Box::leak(std::fs::read(path).ok()?.into_boxed_slice());
+    // The CJK faces are tens of megabytes: mapped, only the glyphs drawn are read.
+    let file = std::fs::File::open(path).ok()?;
+    // SAFETY: system font files aren't changed while the app runs.
+    let map = unsafe { memmap2::Mmap::map(&file) }.ok()?;
+    let bytes: &'static [u8] = &Box::leak(Box::new(map))[..];
     cache.insert(path.to_owned(), bytes);
     Some(Face { bytes, index })
 }

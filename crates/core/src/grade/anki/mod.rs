@@ -5,6 +5,7 @@ pub mod connect;
 pub mod fields;
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::{GradeButton, GradeError, Grader, StateMap};
 use crate::cards::CardState;
 use crate::finder::Word;
+use crate::library::fsutil::{read_json, write_json};
 
 const GRADES: [GradeButton; 4] = [
     GradeButton { label: "Again", value: 1 },
@@ -68,11 +70,50 @@ pub struct AnkiGrader {
     index: Mutex<HashMap<String, u64>>,
     states: Mutex<HashMap<u64, CardState>>,
     synced: Mutex<bool>,
+    saved: Option<PathBuf>,
+}
+
+// What the last sync found, so words are coloured before the next one answers.
+#[derive(Serialize, Deserialize)]
+struct Saved {
+    // The deck and note type it was found in: another choice starts afresh.
+    search: String,
+    word_field: String,
+    index: HashMap<String, u64>,
+    states: HashMap<u64, CardState>,
 }
 
 impl AnkiGrader {
     pub fn new(backend: Box<dyn AnkiBackend>, mapping: AnkiMapping) -> Self {
-        AnkiGrader { backend, mapping, index: Mutex::default(), states: Mutex::default(), synced: Mutex::new(false) }
+        AnkiGrader { backend, mapping, index: Mutex::default(), states: Mutex::default(), synced: Mutex::new(false), saved: None }
+    }
+
+    // Keeps what is synced in `data_dir`, and starts from what was kept there.
+    pub fn saved_in(mut self, data_dir: &Path) -> Self {
+        let path = data_dir.join("anki-cards.json");
+        if let Some(saved) = read_json::<Saved>(&path)
+            && saved.search == self.mapping.search()
+            && saved.word_field == self.mapping.word_field
+        {
+            self.index = Mutex::new(saved.index);
+            self.states = Mutex::new(saved.states);
+            self.synced = Mutex::new(true);
+        }
+        self.saved = Some(path);
+        self
+    }
+
+    fn save(&self) {
+        let Some(path) = &self.saved else { return };
+        let saved = Saved {
+            search: self.mapping.search(),
+            word_field: self.mapping.word_field.clone(),
+            index: self.index.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            states: self.states.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        };
+        if let Err(e) = write_json(path, &saved) {
+            log::warn!("saving the Anki cards: {e}");
+        }
     }
 
     fn check(&self) -> Result<(), GradeError> {
@@ -149,6 +190,7 @@ impl Grader for AnkiGrader {
         *self.index.lock().unwrap_or_else(|e| e.into_inner()) = index;
         *self.states.lock().unwrap_or_else(|e| e.into_inner()) = states;
         *self.synced.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.save();
         Ok(())
     }
 
@@ -171,6 +213,7 @@ impl Grader for AnkiGrader {
         self.backend.answer(note, value.clamp(1, 4))?;
         let state = self.search_states(&format!("nid:{note}"))?.get(&note).copied().unwrap_or(CardState::Known);
         self.states.lock().unwrap_or_else(|e| e.into_inner()).insert(note, state);
+        self.save();
         Ok(state)
     }
 
@@ -181,20 +224,23 @@ impl Grader for AnkiGrader {
         }
         let m = &self.mapping;
         let mut values = vec![(m.word_field.clone(), word.spelling.clone())];
-        if !m.reading_field.is_empty() {
-            values.push((m.reading_field.clone(), word.reading.clone()));
-        }
-        if !m.meaning_field.is_empty() {
-            values.push((m.meaning_field.clone(), word.meanings.iter().take(5).cloned().collect::<Vec<_>>().join("<br>")));
-        }
-        if !m.sentence_field.is_empty() && !sentence.is_empty() {
+        // A field chosen twice keeps what went into it first, so the word is never overwritten.
+        let mut put = |field: &str, value: String| {
+            if !field.is_empty() && !values.iter().any(|(f, _)| f == field) {
+                values.push((field.to_owned(), value));
+            }
+        };
+        put(&m.reading_field, word.reading.clone());
+        put(&m.meaning_field, word.meanings.iter().take(5).cloned().collect::<Vec<_>>().join("<br>"));
+        if !sentence.is_empty() {
             let sentence =
                 html_escape(sentence).replacen(&html_escape(&word.spelling), &format!("<b>{}</b>", html_escape(&word.spelling)), 1);
-            values.push((m.sentence_field.clone(), sentence));
+            put(&m.sentence_field, sentence);
         }
         let id = self.backend.add_note(&m.deck, &m.note_type, &values, &["rubiyomi"])?;
         self.index.lock().unwrap_or_else(|e| e.into_inner()).insert(word.spelling.clone(), id);
         self.states.lock().unwrap_or_else(|e| e.into_inner()).insert(id, CardState::New);
+        self.save();
         Ok(CardState::New)
     }
 
@@ -207,6 +253,7 @@ impl Grader for AnkiGrader {
             self.note_of(word).ok_or_else(|| GradeError::NotFound(format!("{} isn't in your Anki deck: add it first", word.spelling)))?;
         self.backend.suspend(note)?;
         self.states.lock().unwrap_or_else(|e| e.into_inner()).insert(note, CardState::Suspended);
+        self.save();
         Ok(CardState::Suspended)
     }
 }

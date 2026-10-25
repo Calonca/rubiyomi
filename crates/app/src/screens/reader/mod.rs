@@ -36,6 +36,23 @@ const FOOTER: f32 = 28.0;
 // Longer than this without touching the page is not reading.
 const IDLE: f64 = 180.0;
 const SLIDE: f64 = 0.22;
+// Faster than this, pages are being flipped through, not read.
+const SKIMMING_CPM: f64 = 1500.0;
+const SKIMMING_PAGE: f64 = 1.5;
+// After this long without a flip, a run of skimmed pages is settled.
+const SKIM_SETTLES: f64 = 3.0;
+// Up to this many pages are a quick flip, dropped without asking.
+const SKIM_QUIET: u32 = 2;
+
+// Pages flipped through too fast to have been read, held back from the stats until the
+// reader says whether they count.
+#[derive(Default)]
+struct Skim {
+    day: Day,
+    seconds: f64,
+    pages: u32,
+    last: f64,
+}
 
 // The page left behind, sliding out while the new one slides in.
 struct Slide {
@@ -82,6 +99,8 @@ struct Colours {
     words: Arc<Vec<Word>>,
     states: StateMap,
     asked: bool,
+    // When the colours came, to fade them in; long ago for saved ones.
+    shown: f64,
 }
 
 pub struct ReaderScreen {
@@ -119,6 +138,11 @@ pub struct ReaderScreen {
     seconds: f64,
     slide: Option<Slide>,
     snap: Option<Snap>,
+    prefetched: HashSet<usize>,
+    // When the page in view came, to tell reading it from flipping past it.
+    page_since: f64,
+    skim: Option<Skim>,
+    skim_question: Option<Skim>,
 }
 
 impl ReaderScreen {
@@ -165,6 +189,10 @@ impl ReaderScreen {
             seconds: 0.0,
             slide: None,
             snap: None,
+            prefetched: HashSet::new(),
+            page_since: 0.0,
+            skim: None,
+            skim_question: None,
         };
         reader.runs = reader.chapter_runs();
         Ok(reader)
@@ -203,7 +231,7 @@ impl ReaderScreen {
         let from = self.pages.get(self.page).cloned();
         let chapter = self.index;
         let read = from.as_ref().map_or(Day::default(), |page| self.page_read(page));
-        let timed = self.active();
+        let gap = self.active();
         let moved = match turn {
             Turn::Next if self.page + 1 < self.pages.len() => {
                 self.page += 1;
@@ -233,11 +261,28 @@ impl ReaderScreen {
         };
         if turn == Turn::Next && moved {
             let mut read = read;
-            if timed {
+            if gap.is_some() {
                 read.timed_chars = read.chars;
             }
             read.chapters = (self.index != chapter) as u32;
-            self.pending.add(read);
+            let on_page = self.now - self.page_since;
+            let skimmed = read.chars > 0 && (on_page < SKIMMING_PAGE || read.chars as f64 * 60.0 / on_page > SKIMMING_CPM);
+            if skimmed {
+                let skim = self.skim.get_or_insert_with(Skim::default);
+                skim.day.add(read);
+                if let Some(gap) = gap {
+                    self.seconds -= gap;
+                    skim.seconds += gap;
+                }
+                skim.pages += 1;
+                skim.last = self.now;
+            } else {
+                self.settle_skim();
+                self.pending.add(read);
+            }
+        }
+        if moved {
+            self.page_since = self.now;
         }
         self.flush(cx);
         if !moved {
@@ -252,17 +297,64 @@ impl ReaderScreen {
     }
 
     // Time counts from one touch of the page to the next, unless it was left alone too long.
-    // Says whether the clock was running since the last touch.
-    fn active(&mut self) -> bool {
-        let timed = self.last_active.is_some_and(|last| {
-            let gap = self.now - last;
-            if gap > 0.0 && gap < IDLE {
-                self.seconds += gap;
-            }
-            gap < IDLE
-        });
+    // Gives the time counted, if the clock was running since the last touch.
+    fn active(&mut self) -> Option<f64> {
+        let gap = self.last_active.map(|last| (self.now - last).max(0.0)).filter(|gap| *gap < IDLE);
+        if let Some(gap) = gap {
+            self.seconds += gap;
+        }
         self.last_active = Some(self.now);
-        timed
+        gap
+    }
+
+    // A run of skimmed pages is over: a quick flip is dropped, a longer one asked about.
+    fn settle_skim(&mut self) {
+        let Some(skim) = self.skim.take() else { return };
+        if skim.pages > SKIM_QUIET && self.skim_question.is_none() {
+            self.skim_question = Some(skim);
+        }
+    }
+
+    fn skim_dialog(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>, s: &Scheme) {
+        let Some(skim) = &self.skim_question else { return };
+        let mut answer = None;
+        let frame = egui::Frame::new().fill(c(s.surface_container_high)).corner_radius(28).inner_margin(egui::Margin::same(24));
+        let seconds = skim.seconds.round() as u64;
+        let time = if seconds < 60 { format!("{seconds} s") } else { format!("{} min {} s", seconds / 60, seconds % 60) };
+        let body = format!(
+            "{} pages, {} characters, went by in {time}: faster than reading. Count them in your stats, or leave them out and measure from now?",
+            skim.pages, skim.day.chars
+        );
+        egui::Modal::new(egui::Id::new("skimmed")).frame(frame).show(ctx, |ui| {
+            ui.set_width(320.0_f32.min(ctx.content_rect().width() - 48.0));
+            ui.label(egui::RichText::new("Skimmed?").font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new(body).font(font(text::BODY_MEDIUM)).color(c(s.on_surface_variant)));
+            ui.add_space(16.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if m3::text_button(ui, s, "Count them").clicked() {
+                    answer = Some(true);
+                }
+                if m3::text_button(ui, s, "Leave out").clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        match answer {
+            Some(true) => {
+                if let Some(skim) = self.skim_question.take() {
+                    self.pending.add(skim.day);
+                    self.seconds += skim.seconds;
+                    self.flush(cx);
+                }
+            }
+            Some(false) => {
+                self.skim_question = None;
+                self.last_active = Some(self.now);
+                self.page_since = self.now;
+            }
+            None => {}
+        }
     }
 
     // What reading a page adds to the stats: its characters, and its words with how many are unknown.
@@ -392,6 +484,15 @@ impl ReaderScreen {
         self.now = ctx.input(|i| i.time);
         if self.last_active.is_none() {
             self.last_active = Some(self.now);
+            self.page_since = self.now;
+        }
+        if let Some(skim) = &self.skim {
+            let left = SKIM_SETTLES - (self.now - skim.last);
+            if left <= 0.0 {
+                self.settle_skim();
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
+            }
         }
         self.poll_images(&ctx);
         let inset = m3::insets(&ctx);
@@ -416,7 +517,9 @@ impl ReaderScreen {
         {
             self.review(&ctx, cx, action);
         }
-        if self.sheet {
+        if self.skim_question.is_some() {
+            self.skim_dialog(&ctx, cx, s);
+        } else if self.sheet {
             self.page_sheet(&ctx, cx, s);
         } else if self.chapters {
             if let Some(i) = self.chapter_list(&ctx, s) {
@@ -439,7 +542,7 @@ impl ReaderScreen {
             } else {
                 close = true;
             }
-        } else if !self.chapters && !self.sheet {
+        } else if !self.chapters && !self.sheet && self.skim_question.is_none() {
             self.keys(&ctx, cx);
         }
         if close {
@@ -564,8 +667,14 @@ impl ReaderScreen {
             }
             let options = PaintOptions { family: family(p.typeface), text: c(s.on_surface), ruby: m3::alpha(c(s.on_surface), 0.8) };
             let colours = self.colours.as_ref().filter(|c| c.index == self.index && p.colours != WordColours::Off);
+            let fade = colours.map_or(1.0, |c| ((self.now - c.shown) / 0.15).clamp(0.0, 1.0) as f32);
+            if fade < 1.0 {
+                ctx.request_repaint();
+            }
+            let text = c(s.on_surface);
             let colour_of = |w: &Word| -> Option<egui::Color32> {
-                Some(state_colour(*colours?.states.get(&w.key())?, s.dark)).filter(|c| *c != egui::Color32::TRANSPARENT)
+                let colour = state_colour(*colours?.states.get(&w.key())?, s.dark);
+                (colour != egui::Color32::TRANSPARENT).then(|| m3::blend(text, colour, fade))
             };
             let ink = |offset: usize| {
                 let c = colours.filter(|_| p.colours == WordColours::Text)?;
@@ -598,7 +707,7 @@ impl ReaderScreen {
                 c(s.on_surface_variant),
             );
         }
-        if self.chapters || self.sheet {
+        if self.chapters || self.sheet || self.skim_question.is_some() {
             return;
         }
         if response.dragged() {
@@ -681,7 +790,21 @@ impl ReaderScreen {
         };
         let Some(word) = found else { return };
         let span = block_start + word.start..block_start + word.start + word.len;
-        let rect = self.span_rect(origin, span.clone());
+        let word_rect = self.span_rect(origin, span.clone());
+        // Across the lines the card keeps clear of the whole sentence, so it can be read
+        // with the card open; along them it stays at the word, as the sentence's last
+        // piece often starts at the head of a line far from it.
+        let around = sentence_range(&text.text, word.start);
+        let sentence_rect = self.span_rect(origin, block_start + around.start..block_start + around.end);
+        let rect = match (sentence_rect.is_positive(), cx.page.vertical) {
+            (false, _) => word_rect,
+            (true, true) => {
+                egui::Rect::from_min_max(pos2(sentence_rect.left(), word_rect.top()), pos2(sentence_rect.right(), word_rect.bottom()))
+            }
+            (true, false) => {
+                egui::Rect::from_min_max(pos2(word_rect.left(), sentence_rect.top()), pos2(word_rect.right(), sentence_rect.bottom()))
+            }
+        };
         if let Some(page) = self.pages.get(self.page) {
             self.revealed.extend(page.glyphs.iter().filter(|g| span.contains(&g.offset)).map(|g| (g.block, g.run)));
         }
@@ -704,49 +827,76 @@ impl ReaderScreen {
         self.save(cx.library);
     }
 
-    // Finding the words of a chapter takes a moment, so it runs aside; the
-    // states are asked again whenever the grader says they changed.
+    // A chapter's words are saved once found, so a chapter seen before is coloured on its
+    // first frame; finding them takes a moment, so it runs aside, and the next chapter's
+    // are found ahead. The states are asked again whenever the grader says they changed.
     fn colour(&mut self, ctx: &egui::Context, cx: &Ctx<'_>) {
-        if let Some(done) = task::take(&mut self.colouring) {
+        if let Some(mut done) = task::take(&mut self.colouring) {
+            if let Some(old) = self.colours.as_ref().filter(|c| c.index == done.index) {
+                done.shown = old.shown;
+            } else {
+                done.shown = self.now;
+            }
             self.colours = Some(done);
         }
-        let (Some(grader), Ok(finder)) = (cx.grader, cx.finder) else {
+        let Some(grader) = cx.grader else {
             self.colours = None;
             return;
         };
         let fresh = self.colours.as_ref().is_some_and(|c| c.index == self.index && c.generation == cx.generation);
         if fresh || self.colouring.is_some() {
+            if fresh {
+                self.prefetch(cx);
+            }
             return;
         }
-        let (grader, finder, index, generation) = (grader.clone(), finder.clone(), self.index, cx.generation);
+        let (index, generation) = (self.index, cx.generation);
         let known = self.colours.as_ref().filter(|c| c.index == index).map(|c| c.words.clone());
-        let texts: Vec<(usize, String)> = if known.is_some() {
-            Vec::new()
-        } else {
-            let mut start = 0;
-            let mut texts = Vec::new();
-            for b in &self.chapter.blocks {
-                if let Some(t) = b.as_text() {
-                    texts.push((start, t.text.clone()));
-                }
-                start += b.char_len();
-            }
-            texts
-        };
+        if known.is_none()
+            && let Some(tag) = cx.words_tag
+            && let Some(words) = cx.library.cached_words(&self.meta.id, index, tag)
+        {
+            let words = Arc::new(words);
+            let states = grader.states(&words);
+            self.colours = Some(Colours { index, generation, words, states, asked: false, shown: f64::NEG_INFINITY });
+            return;
+        }
+        let Ok(finder) = cx.finder else { return };
+        let save = cx.words_tag.map(|tag| (cx.library.clone(), self.meta.id.clone(), tag.to_owned()));
+        let (grader, finder) = (grader.clone(), finder.clone());
+        let chapter = if known.is_some() { None } else { Some(self.chapter.clone()) };
         self.colouring = Some(Task::spawn(ctx, move || {
             let words = known.unwrap_or_else(|| {
-                let mut all = Vec::new();
-                for (start, text) in &texts {
-                    all.extend(finder.words(text).into_iter().map(|mut w| {
-                        w.start += start;
-                        w
-                    }));
+                let words = finder.chapter_words(chapter.as_ref().expect("a chapter to split"));
+                if let Some((library, id, tag)) = &save {
+                    library.cache_words(id, index, tag, &words);
                 }
-                Arc::new(all)
+                Arc::new(words)
             });
             let states = grader.states(&words);
-            Colours { index, generation, words, states, asked: false }
+            Colours { index, generation, words, states, asked: false, shown: 0.0 }
         }));
+    }
+
+    // Finds and saves the next chapter's words while this one is read.
+    fn prefetch(&mut self, cx: &Ctx<'_>) {
+        let next = self.index + 1;
+        if next >= self.meta.chapters.len() || !self.prefetched.insert(next) {
+            return;
+        }
+        let (Some(tag), Ok(finder)) = (cx.words_tag, cx.finder) else {
+            self.prefetched.remove(&next);
+            return;
+        };
+        if cx.library.cached_words(&self.meta.id, next, tag).is_some() {
+            return;
+        }
+        let (library, id, tag, finder) = (cx.library.clone(), self.meta.id.clone(), tag.to_owned(), finder.clone());
+        std::thread::spawn(move || {
+            if let Some(chapter) = library.chapter(&id, next) {
+                library.cache_words(&id, next, &tag, &finder.chapter_words(&chapter));
+            }
+        });
     }
 
     // The saved states show at once; fresh ones follow when the reviews service answers.
@@ -954,8 +1104,8 @@ impl ReaderScreen {
     }
 }
 
-// The sentence around a word, for the card.
-fn sentence(text: &str, at: usize) -> String {
+// Where the sentence around a word starts and ends, in the block's chars.
+fn sentence_range(text: &str, at: usize) -> Range<usize> {
     let chars: Vec<char> = text.chars().collect();
     let ends = |c: char| matches!(c, '。' | '！' | '？' | '!' | '?' | '\n');
     let start = chars[..at.min(chars.len())].iter().rposition(|&c| ends(c)).map_or(0, |i| i + 1);
@@ -963,7 +1113,13 @@ fn sentence(text: &str, at: usize) -> String {
     while end < chars.len() && matches!(chars[end], '」' | '』' | '）' | ')') {
         end += 1;
     }
-    chars[start..end].iter().collect::<String>().trim().to_owned()
+    start..end
+}
+
+// The sentence around a word, for the card.
+fn sentence(text: &str, at: usize) -> String {
+    let range = sentence_range(text, at);
+    text.chars().skip(range.start).take(range.len()).collect::<String>().trim().to_owned()
 }
 
 // Under a line of text; left of a column, as its furigana is on the right.

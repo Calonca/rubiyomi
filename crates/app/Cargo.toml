@@ -23,6 +23,7 @@ egui.workspace = true
 log.workspace = true
 image.workspace = true
 serde_json.workspace = true
+memmap2 = "0.9"
 egui_material_icons = "0.8"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
