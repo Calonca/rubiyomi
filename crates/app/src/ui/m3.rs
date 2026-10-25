@@ -250,6 +250,11 @@ pub fn text_button(ui: &mut Ui, s: &Scheme, label: &str) -> Response {
     response
 }
 
+// A text button at the right edge, where a row of actions ends.
+pub fn trailing_text_button(ui: &mut Ui, s: &Scheme, label: &str) -> Response {
+    ui.allocate_ui_with_layout(vec2(ui.available_width(), 40.0), Layout::right_to_left(Align::Center), |ui| text_button(ui, s, label)).inner
+}
+
 pub fn tonal_button(ui: &mut Ui, s: &Scheme, label: &str) -> Response {
     let (fill, ink) = (c(s.secondary_container), c(s.on_secondary_container));
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font(text::LABEL_LARGE), ink);
@@ -341,7 +346,6 @@ pub fn segmented(ui: &mut Ui, s: &Scheme, options: &[&str], selected: &mut usize
     let n = options.len().max(1);
     let w = rect.width() / n as f32;
     let mut changed = false;
-    ui.painter().rect_stroke(rect, CornerRadius::same(20), Stroke::new(1.0, c(s.outline)), egui::StrokeKind::Inside);
     for (i, label) in options.iter().enumerate() {
         let cell = Rect::from_min_size(pos2(rect.left() + w * i as f32, rect.top()), vec2(w, rect.height()));
         let response = ui.interact(cell, base.with(i), Sense::click());
@@ -358,9 +362,6 @@ pub fn segmented(ui: &mut Ui, s: &Scheme, options: &[&str], selected: &mut usize
         } else {
             ui.painter().rect_filled(cell, radius, alpha(c(s.on_surface), state_layer(&response)));
         }
-        if i > 0 {
-            ui.painter().vline(cell.left(), rect.y_range(), Stroke::new(1.0, c(s.outline)));
-        }
         let ink = if on { c(s.on_secondary_container) } else { c(s.on_surface) };
         ui.painter().text(cell.center(), Align2::CENTER_CENTER, *label, font(text::LABEL_LARGE), ink);
         if response.clicked() && !on {
@@ -368,6 +369,11 @@ pub fn segmented(ui: &mut Ui, s: &Scheme, options: &[&str], selected: &mut usize
             changed = true;
         }
     }
+    // The outline goes over the fills, which would hide it where they meet it.
+    for i in 1..n {
+        ui.painter().vline(rect.left() + w * i as f32, rect.y_range(), Stroke::new(1.0, c(s.outline)));
+    }
+    ui.painter().rect_stroke(rect, CornerRadius::same(20), Stroke::new(1.0, c(s.outline)), egui::StrokeKind::Inside);
     changed
 }
 

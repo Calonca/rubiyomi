@@ -104,6 +104,8 @@ struct Colours {
     asked: bool,
     // When the colours came, to fade them in; long ago for saved ones.
     shown: f64,
+    // Why jpdb.io couldn't find the words, which the finder on the device then found.
+    failed: Option<String>,
 }
 
 pub struct ReaderScreen {
@@ -142,6 +144,8 @@ pub struct ReaderScreen {
     slide: Option<Slide>,
     snap: Option<Snap>,
     prefetched: HashSet<usize>,
+    // Whether the reader was told jpdb.io failed, once a book is enough.
+    told_failed: bool,
     // When the page in view came, to tell reading it from flipping past it.
     page_since: f64,
     skim: Option<Skim>,
@@ -193,6 +197,7 @@ impl ReaderScreen {
             slide: None,
             snap: None,
             prefetched: HashSet::new(),
+            told_failed: false,
             page_since: 0.0,
             skim: None,
             skim_question: None,
@@ -847,12 +852,18 @@ impl ReaderScreen {
     // A chapter's words are saved once found, so a chapter seen before is coloured on its
     // first frame; finding them takes a moment, so it runs aside, and the next chapter's
     // are found ahead. The states are asked again whenever the grader says they changed.
-    fn colour(&mut self, ctx: &egui::Context, cx: &Ctx<'_>) {
+    fn colour(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>) {
         if let Some(mut done) = task::take(&mut self.colouring) {
             if let Some(old) = self.colours.as_ref().filter(|c| c.index == done.index) {
                 done.shown = old.shown;
             } else {
                 done.shown = self.now;
+            }
+            if let Some(e) = done.failed.take()
+                && !self.told_failed
+            {
+                self.told_failed = true;
+                cx.snackbar.show(ctx, format!("jpdb.io couldn't find the words ({e}), so this device did. See Settings → Parsing."));
             }
             self.colours = Some(done);
         }
@@ -879,7 +890,7 @@ impl ReaderScreen {
         {
             let words = Arc::new(words);
             let states = grader.map(|g| g.states(&words)).unwrap_or_default();
-            self.colours = Some(Colours { index, generation, tag, words, states, asked: false, shown: f64::NEG_INFINITY });
+            self.colours = Some(Colours { index, generation, tag, words, states, asked: false, shown: f64::NEG_INFINITY, failed: None });
             return;
         }
         let finder = cx.finder.ok().cloned();
@@ -890,16 +901,20 @@ impl ReaderScreen {
         let parser = cx.parser.cloned();
         let chapter = if known.is_some() { None } else { Some(self.chapter.clone()) };
         self.colouring = Some(Task::spawn(ctx, move || {
+            let mut failed = None;
             let words = known.unwrap_or_else(|| {
                 let chapter = chapter.as_ref().expect("a chapter to split");
-                let (words, keep) = find_words(chapter, finder.as_deref(), parser.as_deref());
-                if keep && let Some((library, id, tag)) = &save {
+                let (words, why) = find_words(chapter, finder.as_deref(), parser.as_deref());
+                if why.is_none()
+                    && let Some((library, id, tag)) = &save
+                {
                     library.cache_words(id, index, tag, &words);
                 }
+                failed = why;
                 Arc::new(words)
             });
             let states = grader.map(|g| g.states(&words)).unwrap_or_default();
-            Colours { index, generation, tag, words, states, asked: false, shown: 0.0 }
+            Colours { index, generation, tag, words, states, asked: false, shown: 0.0, failed }
         }));
     }
 
@@ -921,7 +936,7 @@ impl ReaderScreen {
         let (library, id, tag) = (cx.library.clone(), self.meta.id.clone(), tag.to_owned());
         std::thread::spawn(move || {
             if let Some(chapter) = library.chapter(&id, next)
-                && let (words, true) = find_words(&chapter, finder.as_deref(), parser.as_deref())
+                && let (words, None) = find_words(&chapter, finder.as_deref(), parser.as_deref())
             {
                 library.cache_words(&id, next, &tag, &words);
             }
@@ -1183,14 +1198,15 @@ fn line_boxes(page: &Page, origin: egui::Pos2, span: &Range<usize>, vertical: bo
 }
 
 // A chapter's words, from jpdb.io when it parses, else from the finder on the device; and
-// whether they may be saved, which words found by the fallback may not.
-fn find_words(chapter: &Chapter, finder: Option<&Finder>, parser: Option<&JpdbClient>) -> (Vec<Word>, bool) {
-    if let Some(parser) = parser {
-        match parser.chapter_words(chapter) {
-            Ok(words) => return (words, true),
-            Err(e) => log::warn!("jpdb.io couldn't parse the chapter: {e}"),
+// why jpdb.io failed, as words found by the fallback aren't saved.
+fn find_words(chapter: &Chapter, finder: Option<&Finder>, parser: Option<&JpdbClient>) -> (Vec<Word>, Option<String>) {
+    let failed = match parser.map(|p| p.chapter_words(chapter)) {
+        Some(Ok(words)) => return (words, None),
+        Some(Err(e)) => {
+            log::warn!("jpdb.io couldn't parse the chapter: {e}");
+            Some(e.to_string())
         }
-        return (finder.map(|f| f.chapter_words(chapter)).unwrap_or_default(), false);
-    }
-    (finder.map(|f| f.chapter_words(chapter)).unwrap_or_default(), true)
+        None => None,
+    };
+    (finder.map(|f| f.chapter_words(chapter)).unwrap_or_default(), failed)
 }

@@ -4,12 +4,14 @@
 use egui::RichText;
 use egui_material_icons::icons::{ICON_AUTO_STORIES, ICON_DESCRIPTION, ICON_DICTIONARY, ICON_GAVEL, ICON_INFO, ICON_SCHOOL, ICON_SEGMENT};
 use rubiyomi_core::dict::DictVersion;
+use rubiyomi_core::jpdb::JpdbClient;
 use rubiyomi_core::platform::Platform;
 use rubiyomi_core::settings::{PageSettings, Parser, ReviewSource};
 use rubiyomi_core::theme::Scheme;
 
 use super::reviews_form::{ReviewsForm, hint};
 use crate::reviews::{Reviews, Status};
+use crate::task::{self, Task};
 use crate::ui::m3::{self, c, font, text};
 
 const IPADIC_NOTICE: &str = include_str!("../../notices/ipadic.txt");
@@ -40,8 +42,10 @@ pub struct SettingsScreen {
     leaving: Option<Leave>,
     // A tab to go to once the dialog is answered, for the app to take.
     go_to: Option<usize>,
-    // A jpdb.io key typed on the parsing page, before it is used.
+    // The jpdb.io key as typed on the parsing page, and whether jpdb.io takes it.
     parse_key: String,
+    checked: Option<(String, Result<(), String>)>,
+    checking: Option<Task<(String, Result<(), String>)>>,
 }
 
 impl SettingsScreen {
@@ -149,7 +153,8 @@ impl SettingsScreen {
             (Parser::Jpdb, false) => "jpdb.io: needs a key, on this device until then",
         };
         if m3::list_item(ui, s, ICON_SEGMENT, "Parsing", parsing, true).clicked() {
-            self.parse_key.clear();
+            self.parse_key = reviews.settings.jpdb_key.clone();
+            self.checked = None;
             self.page = Page::Parsing;
         }
         if m3::list_item(ui, s, ICON_SCHOOL, "Reviews", &reviews.summary(), true).clicked() {
@@ -230,42 +235,74 @@ impl SettingsScreen {
     }
 
     fn parsing(&mut self, ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform, reviews: &mut Reviews) {
+        if let Some(done) = task::take(&mut self.checking) {
+            self.checked = Some(done);
+        }
         prose(ui, |ui| {
+            hint(ui, s, "Who finds the words in the text, and their readings and meanings when you tap one.");
+            ui.add_space(12.0);
             let mut i = (reviews.settings.parser == Parser::Jpdb) as usize;
             if m3::segmented(ui, s, &["On this device", "jpdb.io"], &mut i) {
                 let mut changed = reviews.settings.clone();
                 changed.parser = if i == 1 { Parser::Jpdb } else { Parser::Device };
                 reviews.apply_parsing(platform, changed);
             }
-            ui.add_space(16.0);
+            ui.add_space(12.0);
             if reviews.settings.parser == Parser::Device {
-                words(
-                    ui,
-                    s,
-                    "The words are found on this device, with lindera and the JMdict dictionary. Nothing leaves it, and it works offline.",
-                );
+                hint(ui, s, "Found with lindera and the JMdict dictionary. Nothing leaves the device, and it works offline.");
                 return;
             }
-            words(
+            hint(
                 ui,
                 s,
-                "jpdb.io finds the words, the way its own reader splits them, with its meanings. Each chapter's text is sent to jpdb.io                  once, when it is first opened, and its words are kept on this device. Offline, the words are found on this device.",
+                "Split the way jpdb.io's own reader splits them. The text of each chapter is sent to jpdb.io once, when you first \
+                 open it, and its words are kept on the device. Offline, they are found on the device.",
             );
-            if reviews.parser.is_some() {
+            ui.add_space(16.0);
+            let (field, cleared) = super::reviews_form::jpdb_key_field(ui, s, platform, &mut self.parse_key);
+            let key = self.parse_key.trim().to_owned();
+            if cleared || (!field.has_focus() && key != reviews.settings.jpdb_key.trim()) {
+                let mut changed = reviews.settings.clone();
+                changed.jpdb_key = key.clone();
+                // The key is the reviews' too, which then sync with it.
+                if changed.reviews == ReviewSource::Jpdb {
+                    reviews.apply(ui.ctx(), platform, changed);
+                } else {
+                    reviews.apply_parsing(platform, changed);
+                }
+            }
+            ui.add_space(8.0);
+            if key.is_empty() {
+                hint(ui, s, "Until there's a key, the words are found on the device.");
                 return;
             }
-            ui.add_space(16.0);
-            hint(ui, s, "jpdb.io needs your API key, from the settings page of your jpdb.io account.");
-            ui.add_space(8.0);
-            let paste = || platform.clipboard_text();
-            let paste = platform.can_paste().then_some(&paste as &dyn Fn() -> Option<String>);
-            m3::text_field(ui, s, &mut self.parse_key, "API key", true, paste);
-            ui.add_space(8.0);
-            if !self.parse_key.trim().is_empty() && m3::filled_button(ui, s, "Use this key").clicked() {
-                let mut changed = reviews.settings.clone();
-                changed.jpdb_key = self.parse_key.trim().to_owned();
-                reviews.apply_parsing(platform, changed);
-                self.parse_key.clear();
+            let fresh = self.checked.as_ref().is_some_and(|(k, _)| *k == key);
+            if !fresh && self.checking.is_none() && !field.has_focus() {
+                let client = JpdbClient::new(&key);
+                self.checking = Some(Task::spawn(ui.ctx(), move || {
+                    let answer = client.parse_words(&["日本語".into()]).map(|_| ()).map_err(|e| e.to_string());
+                    (key, answer)
+                }));
+            }
+            match &self.checked {
+                _ if self.checking.is_some() => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        hint(ui, s, "Asking jpdb.io…");
+                    });
+                }
+                Some((_, Ok(()))) if fresh => hint(ui, s, "jpdb.io takes the key."),
+                Some((_, Err(e))) if fresh => {
+                    ui.label(
+                        RichText::new(format!("{e}. Until it's fixed, the words are found on the device."))
+                            .font(font(text::BODY_MEDIUM))
+                            .color(c(s.error)),
+                    );
+                    if m3::trailing_text_button(ui, s, "Try again").clicked() {
+                        self.checked = None;
+                    }
+                }
+                _ => {}
             }
         });
     }

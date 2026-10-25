@@ -80,20 +80,11 @@ impl ReviewsForm {
     }
 
     fn jpdb(&mut self, ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform) {
-        label(ui, "API key");
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            hint(ui, s, "Copy it from the bottom of ");
-            ui.hyperlink_to(
-                RichText::new("jpdb.io's settings page").font(font(text::BODY_MEDIUM)).color(c(s.primary)).underline(),
-                "https://jpdb.io/settings",
-            );
-            hint(ui, s, ". It is kept in the system's keyring, never in Rubiyomi's files.");
-        });
-        ui.add_space(4.0);
-        let paste = || platform.clipboard_text();
-        let paste = platform.can_paste().then_some(&paste as &dyn Fn() -> Option<String>);
-        let field = m3::text_field(ui, s, &mut self.draft.jpdb_key, "API key", true, paste);
+        let (field, cleared) = jpdb_key_field(ui, s, platform, &mut self.draft.jpdb_key);
+        if cleared {
+            self.decks = None;
+            self.decks_for.clear();
+        }
         let key = self.draft.jpdb_key.trim().to_owned();
         if !field.has_focus() && !key.is_empty() && key != self.decks_for && self.loading_decks.is_none() {
             self.decks_for = key.clone();
@@ -417,6 +408,34 @@ fn labelled_combo(ui: &mut egui::Ui, id: &str, value: &mut String, options: &[(S
                 }
             }
         });
+}
+
+// The jpdb.io key, with where to find it; says whether Clear was pressed.
+pub fn jpdb_key_field(ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform, key: &mut String) -> (egui::Response, bool) {
+    label(ui, "API key");
+    ui.scope(|ui| {
+        // Wrapped lines are otherwise a touch target's height apart.
+        ui.spacing_mut().interact_size.y = 0.0;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            hint(ui, s, "Copy it from the bottom of ");
+            ui.hyperlink_to(
+                RichText::new("jpdb.io's settings page").font(font(text::BODY_MEDIUM)).color(c(s.primary)).underline(),
+                "https://jpdb.io/settings",
+            );
+            hint(ui, s, ". It is kept in the system's keyring, never in Rubiyomi's files.");
+        });
+    });
+    ui.add_space(4.0);
+    let paste = || platform.clipboard_text();
+    let paste = platform.can_paste().then_some(&paste as &dyn Fn() -> Option<String>);
+    let field = m3::text_field(ui, s, key, "API key", true, paste);
+    let mut cleared = false;
+    if !key.is_empty() && m3::trailing_text_button(ui, s, "Clear key").clicked() {
+        key.clear();
+        cleared = true;
+    }
+    (field, cleared)
 }
 
 fn label(ui: &mut egui::Ui, t: &str) {
