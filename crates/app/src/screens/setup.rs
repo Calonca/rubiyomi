@@ -3,7 +3,7 @@
 
 use egui::RichText;
 use rubiyomi_core::platform::Platform;
-use rubiyomi_core::settings::ReviewSource;
+use rubiyomi_core::settings::{Parser, ReviewSource};
 use rubiyomi_core::theme::Scheme;
 
 use super::reviews_form::{ReviewsForm, hint};
@@ -74,6 +74,10 @@ impl Setup {
         hint(ui, s, "Do you study with jpdb.io or Anki?");
         ui.add_space(16.0);
         self.form.ui(ui, s, platform);
+        if self.form.draft.reviews == ReviewSource::Jpdb {
+            ui.add_space(12.0);
+            hint(ui, s, "jpdb.io will also find the words in the text, as its own reader does. You can change that in Settings → Parsing.");
+        }
         ui.add_space(24.0);
         let mut done = false;
         ui.horizontal(|ui| {
@@ -85,6 +89,9 @@ impl Setup {
                 if m3::filled_button(ui, s, label).clicked() {
                     let mut chosen = self.form.draft.clone();
                     chosen.setup_done = true;
+                    if chosen.reviews == ReviewSource::Jpdb {
+                        chosen.parser = Parser::Jpdb;
+                    }
                     reviews.apply(ui.ctx(), platform, chosen);
                     done = true;
                 }
