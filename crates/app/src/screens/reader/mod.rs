@@ -5,6 +5,7 @@ mod canvas;
 mod popup;
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 use egui::{Align2, FontFamily, Sense, pos2, vec2};
@@ -62,7 +63,9 @@ pub struct ReaderScreen {
     popup: Option<Popup>,
     images: HashMap<String, egui::TextureHandle>,
     decoding: Vec<Task<(String, Option<egui::ColorImage>)>>,
-    saved: (usize, usize),
+    saved: (usize, usize, Option<Range<usize>>),
+    // Where the last look-up was, marked until the page turns.
+    mark: Option<Range<usize>>,
     drag: egui::Vec2,
     colours: Option<Colours>,
     colouring: Option<Task<Colours>>,
@@ -74,6 +77,7 @@ impl ReaderScreen {
     pub fn open(library: &Library, meta: BookMeta) -> Result<Self, String> {
         let progress = library.progress(&meta.id);
         let index = (progress.chapter as usize).min(meta.chapters.len().saturating_sub(1));
+        let mark = progress.word.filter(|_| index == progress.chapter as usize).map(|(at, len)| at as usize..(at + len) as usize);
         let chapter = library.chapter(&meta.id, index).ok_or("This book's files are damaged. Remove it and add it again.")?;
         let mut reader = ReaderScreen {
             meta,
@@ -83,7 +87,7 @@ impl ReaderScreen {
             pages: Vec::new(),
             page: 0,
             laid_out: None,
-            want_offset: Some(progress.offset as usize),
+            want_offset: Some(mark.as_ref().map_or(progress.offset as usize, |m| m.start)),
             want_last: false,
             save_after_layout: false,
             bar: false,
@@ -92,7 +96,8 @@ impl ReaderScreen {
             popup: None,
             images: HashMap::new(),
             decoding: Vec::new(),
-            saved: (index, progress.offset as usize),
+            saved: (index, progress.offset as usize, mark.clone()),
+            mark,
             drag: egui::Vec2::ZERO,
             colours: None,
             colouring: None,
@@ -114,6 +119,7 @@ impl ReaderScreen {
     fn load_chapter(&mut self, library: &Library, index: usize) -> bool {
         let Some(chapter) = library.chapter(&self.meta.id, index) else { return false };
         self.popup = None;
+        self.mark = None;
         self.index = index;
         self.chapter = chapter;
         self.runs = self.chapter_runs();
@@ -131,6 +137,7 @@ impl ReaderScreen {
 
     fn turn(&mut self, library: &Library, turn: Turn) {
         self.popup = None;
+        self.mark = None;
         match turn {
             Turn::Next if self.page + 1 < self.pages.len() => self.page += 1,
             Turn::Next if self.index + 1 < self.meta.chapters.len() => {
@@ -154,15 +161,17 @@ impl ReaderScreen {
 
     fn save(&mut self, library: &Library) {
         let offset = self.want_offset.unwrap_or_else(|| self.offset());
-        if self.saved == (self.index, offset) {
+        let now_at = (self.index, offset, self.mark.clone());
+        if self.saved == now_at {
             return;
         }
-        self.saved = (self.index, offset);
+        self.saved = now_at;
         let progress = Progress {
             chapter: self.index as u32,
             offset: offset as u32,
             fraction: self.meta.fraction_at(self.index, offset),
             updated: now(),
+            word: self.mark.as_ref().map(|m| (m.start as u32, m.len() as u32)),
         };
         if let Err(e) = library.save_progress(&self.meta.id, &progress) {
             log::warn!("saving progress: {e}");
@@ -333,17 +342,19 @@ impl ReaderScreen {
                     }
                 }
             }
-            if let Some(popup) = &self.popup {
-                // One rectangle per line the word spans.
-                let mut lines: Vec<egui::Rect> = Vec::new();
-                for r in page.glyphs.iter().filter(|g| popup.span.contains(&g.offset)).map(|g| to_screen(origin, &g.rect)) {
-                    match lines.last_mut() {
-                        Some(line) if (line.center().y - r.center().y).abs() < r.height() / 2.0 => *line = line.union(r),
-                        _ => lines.push(r),
-                    }
+            let accent = c(s.primary);
+            let selected = self.popup.as_ref().map(|p| p.span.clone());
+            if let Some(mark) = self.mark.clone().filter(|m| Some(m) != selected.as_ref()) {
+                for line in line_boxes(&page, origin, &mark) {
+                    ui.painter().rect_filled(line.expand(1.0), 0.0, m3::alpha(accent, 0.12));
+                    let thickness = (FONT_SIZE * 0.055).max(1.0);
+                    let y = line.bottom() + thickness;
+                    ui.painter().line_segment([pos2(line.left(), y), pos2(line.right(), y)], egui::Stroke::new(thickness, accent));
                 }
-                for line in lines {
-                    ui.painter().rect_filled(line.expand(1.0), 0.0, m3::alpha(c(s.primary), 0.22));
+            }
+            if let Some(span) = selected {
+                for line in line_boxes(&page, origin, &span) {
+                    ui.painter().rect_filled(line.expand(1.0), 0.0, m3::alpha(accent, 0.22));
                 }
             }
             let options =
@@ -427,7 +438,9 @@ impl ReaderScreen {
         popup.sentence = sentence(&text.text, word.start);
         popup.state = cx.grader.and_then(|g| g.states(std::slice::from_ref(&word)).get(&word.key()).copied());
         popup.busy = self.grading.is_some();
+        self.mark = Some(popup.span.clone());
         self.popup = Some(popup);
+        self.save(cx.library);
     }
 
     // Finding the words of a chapter takes a moment, so it runs aside; the
@@ -676,4 +689,16 @@ fn sentence(text: &str, at: usize) -> String {
         end += 1;
     }
     chars[start..end].iter().collect::<String>().trim().to_owned()
+}
+
+// One box per line a span of the chapter covers on this page.
+fn line_boxes(page: &Page, origin: egui::Pos2, span: &Range<usize>) -> Vec<egui::Rect> {
+    let mut lines: Vec<egui::Rect> = Vec::new();
+    for r in page.glyphs.iter().filter(|g| span.contains(&g.offset)).map(|g| to_screen(origin, &g.rect)) {
+        match lines.last_mut() {
+            Some(line) if (line.center().y - r.center().y).abs() < r.height() / 2.0 => *line = line.union(r),
+            _ => lines.push(r),
+        }
+    }
+    lines
 }

@@ -50,7 +50,7 @@ fn a_hostile_image_path_is_written_inside_the_book() {
 fn a_damaged_chapter_is_extracted_again_keeping_the_place() {
     let lib = Library::open(tempdir("lib-damaged"));
     let id = lib.import_bytes(book()).unwrap().meta.id;
-    lib.save_progress(&id, &Progress { chapter: 1, offset: 2, fraction: 0.6, updated: 5 }).unwrap();
+    lib.save_progress(&id, &Progress { chapter: 1, offset: 2, fraction: 0.6, updated: 5, word: Some((3, 2)) }).unwrap();
     std::fs::write(lib.book_dir(&id).join("chapters/0000.json"), "garbage").unwrap();
     assert_eq!(lib.chapter(&id, 0).unwrap().title, "一");
     assert_eq!(lib.progress(&id).offset, 2);

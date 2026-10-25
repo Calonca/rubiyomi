@@ -64,6 +64,9 @@ pub struct Progress {
     pub offset: u32,
     pub fraction: f32,
     pub updated: u64,
+    // The word last looked up in that chapter, start and length, to reopen at.
+    #[serde(default)]
+    pub word: Option<(u32, u32)>,
 }
 
 #[derive(Debug)]
