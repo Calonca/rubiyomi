@@ -15,6 +15,7 @@ use crate::reviews::Reviews;
 use crate::screens::library::LibraryScreen;
 use crate::screens::reader::ReaderScreen;
 use crate::screens::settings::SettingsScreen;
+use crate::screens::setup::Setup;
 use crate::screens::{self, Ctx};
 use crate::task::{self, Task};
 use crate::ui::{fonts, m3};
@@ -29,6 +30,7 @@ pub struct App {
     snackbar: m3::Snackbar,
     imports: Vec<Task<(String, Result<Imported, ImportError>)>>,
     settings: SettingsScreen,
+    setup: Option<Setup>,
     dicts: DictStore,
     loading: Option<Task<Result<Finder, String>>>,
     finder: Result<Arc<Finder>, String>,
@@ -65,6 +67,7 @@ impl App {
             snackbar: m3::Snackbar::default(),
             imports: Vec::new(),
             settings: SettingsScreen::default(),
+            setup: (!reviews.settings.setup_done).then(|| Setup::new(&reviews)),
             dicts,
             loading: Some(loading),
             finder: Err("Preparing the dictionary…".into()),
@@ -107,7 +110,10 @@ impl App {
     fn follow_system(&mut self, ctx: &egui::Context) {
         let ppp = ctx.pixels_per_point();
         let [l, t, r, b] = self.platform.insets().map(|px| (px / ppp).round().clamp(0.0, 127.0) as i8);
-        m3::set_insets(ctx, egui::Margin { left: l, top: t, right: r, bottom: b });
+        let keyboard = self.platform.keyboard() / ppp;
+        // The keyboard covers the navigation bar, so its inset goes while it is up.
+        m3::set_insets(ctx, egui::Margin { left: l, top: t, right: r, bottom: if keyboard > 0.0 { 0 } else { b } });
+        m3::set_keyboard(ctx, keyboard);
         if let Some(dark) = self.platform.dark_mode() {
             let want = if dark { egui::Theme::Dark } else { egui::Theme::Light };
             if ctx.theme() != want {
@@ -159,7 +165,13 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.screen(ui);
+        self.follow_system(ui.ctx());
+        // NativeActivity's window keeps its size under the keyboard, so the app makes room
+        // itself; always through the same scope, or every widget's id would change with the
+        // keyboard and the text field would lose its focus.
+        let mut room = ui.max_rect();
+        room.max.y = (room.max.y - m3::keyboard(ui.ctx())).max(room.min.y + 120.0);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(room), |ui| self.screen(ui));
         self.open_links(ui.ctx());
     }
 }
@@ -167,7 +179,6 @@ impl eframe::App for App {
 impl App {
     fn screen(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        self.follow_system(&ctx);
         self.handle_events(&ctx);
         self.poll_finder();
         self.reviews.poll();
@@ -181,6 +192,13 @@ impl App {
             grader: self.reviews.grader.as_ref(),
             generation: self.reviews.generation,
         };
+        if let Some(setup) = &mut self.setup {
+            if setup.ui(ui, &s, &*self.platform, &mut self.reviews) {
+                self.setup = None;
+            }
+            self.snackbar.ui(&ctx, &s, 0.0);
+            return;
+        }
         if let Some(reader) = &mut self.reader {
             if reader.ui(ui, &mut cx) {
                 self.reader = None;

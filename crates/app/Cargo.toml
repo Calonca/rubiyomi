@@ -26,7 +26,7 @@ serde_json.workspace = true
 egui_material_icons = "0.8"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-eframe = { workspace = true, features = ["default_fonts", "glow", "wayland", "x11"] }
+eframe = { workspace = true, features = ["default_fonts", "glow", "wayland"] }
 env_logger = "0.11"
 rfd = "0.17"
 keyring-core = "1"

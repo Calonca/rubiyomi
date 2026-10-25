@@ -24,6 +24,7 @@ pub enum ReviewSource {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub setup_done: bool,
     pub reviews: ReviewSource,
     #[serde(skip)]
     pub jpdb_key: String,

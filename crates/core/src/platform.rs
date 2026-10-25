@@ -49,6 +49,20 @@ pub trait Platform: Send + Sync {
 
     fn request_anki_permission(&self) {}
 
+    // Software keyboard height in pixels; 0 when hidden or not known.
+    fn keyboard(&self) -> f32 {
+        0.0
+    }
+
+    // Where egui can't reach the clipboard itself (Android).
+    fn can_paste(&self) -> bool {
+        false
+    }
+
+    fn clipboard_text(&self) -> Option<String> {
+        None
+    }
+
     // Keys go to the system's own store, never into our files. An empty value forgets one.
     fn secret(&self, name: &str) -> Option<String> {
         let _ = name;

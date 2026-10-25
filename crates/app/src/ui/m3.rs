@@ -353,3 +353,46 @@ pub fn segmented(ui: &mut Ui, s: &Scheme, options: &[&str], selected: &mut usize
     }
     changed
 }
+
+pub fn keyboard(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(egui::Id::new("keyboard-height"))).unwrap_or(0.0)
+}
+
+pub fn set_keyboard(ctx: &egui::Context, height: f32) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("keyboard-height"), height));
+}
+
+pub fn text_field(
+    ui: &mut Ui,
+    s: &Scheme,
+    value: &mut String,
+    hint: &str,
+    password: bool,
+    paste: Option<&dyn Fn() -> Option<String>>,
+) -> Response {
+    let ctx = ui.ctx().clone();
+    ui.horizontal(|ui| {
+        let width = ui.available_width() - if paste.is_some() { 48.0 } else { 0.0 };
+        let field = ui.add(
+            egui::TextEdit::singleline(value)
+                .password(password)
+                .hint_text(hint)
+                .font(font(text::BODY_LARGE))
+                .margin(Margin::symmetric(16, 16))
+                .background_color(c(s.surface_container_highest))
+                .desired_width(width),
+        );
+        // The window doesn't shrink for the keyboard, so the field is brought above it.
+        if field.has_focus() && keyboard(&ctx) > 0.0 && !ui.clip_rect().contains_rect(field.rect) {
+            field.scroll_to_me(Some(Align::Center));
+        }
+        if let Some(paste) = paste
+            && icon_button(ui, s, egui_material_icons::icons::ICON_CONTENT_PASTE, c(s.on_surface_variant)).on_hover_text("Paste").clicked()
+            && let Some(text) = paste()
+        {
+            *value = text.trim().to_owned();
+        }
+        field
+    })
+    .inner
+}

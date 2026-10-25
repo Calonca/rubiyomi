@@ -202,6 +202,25 @@ impl Platform for Android {
         self.with_activity("requestAnkiPermission", |env, a| env.call_method(a, "requestAnkiPermission", "()V", &[]).map(|_| ()));
     }
 
+    fn keyboard(&self) -> f32 {
+        self.with_activity("keyboardHeight", |env, a| env.call_method(a, "keyboardHeight", "()I", &[])?.i()).unwrap_or(0) as f32
+    }
+
+    fn can_paste(&self) -> bool {
+        true
+    }
+
+    fn clipboard_text(&self) -> Option<String> {
+        self.with_activity("clipboardText", |env, a| {
+            let v = env.call_method(a, "clipboardText", "()Ljava/lang/String;", &[])?.l()?;
+            if v.is_null() {
+                return Ok(None);
+            }
+            Ok(Some(env.get_string(&JString::from(v))?.into()))
+        })
+        .flatten()
+    }
+
     fn secret(&self, name: &str) -> Option<String> {
         self.with_activity("secret", |env, a| {
             let name = env.new_string(name)?;

@@ -176,4 +176,22 @@ public class MainActivity extends NativeActivity {
     public boolean setSecret(String name, String value) {
         return secrets().set(name, value);
     }
+
+    public int keyboardHeight() {
+        WindowInsets insets = getWindow().getDecorView().getRootWindowInsets();
+        if (insets == null || Build.VERSION.SDK_INT < 30) {
+            return 0;
+        }
+        return insets.getInsets(WindowInsets.Type.ime()).bottom;
+    }
+
+    public String clipboardText() {
+        android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        android.content.ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
+        if (clip == null || clip.getItemCount() == 0) {
+            return null;
+        }
+        CharSequence text = clip.getItemAt(0).coerceToText(this);
+        return text == null ? null : text.toString();
+    }
 }

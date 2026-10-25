@@ -13,7 +13,9 @@ use crate::ui::m3::Snackbar;
 
 pub mod library;
 pub mod reader;
+pub mod reviews_form;
 pub mod settings;
+pub mod setup;
 pub mod stats;
 pub mod words;
 
