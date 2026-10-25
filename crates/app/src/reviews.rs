@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rubiyomi_core::grade::anki::connect::AnkiConnect;
 use rubiyomi_core::grade::anki::{AnkiBackend, AnkiGrader};
@@ -30,12 +30,20 @@ pub struct Reviews {
     pub generation: u64,
     pub note: Option<String>,
     syncing: Option<Task<Result<(), GradeError>>>,
+    progress: Arc<Mutex<(usize, usize)>>,
 }
 
 impl Reviews {
     pub fn new(ctx: &egui::Context, platform: &dyn Platform) -> Self {
-        let mut me =
-            Reviews { settings: Settings::load(platform), grader: None, status: Status::Off, generation: 0, note: None, syncing: None };
+        let mut me = Reviews {
+            settings: Settings::load(platform),
+            grader: None,
+            status: Status::Off,
+            generation: 0,
+            note: None,
+            syncing: None,
+            progress: Arc::default(),
+        };
         me.start(ctx, platform);
         me
     }
@@ -60,7 +68,14 @@ impl Reviews {
             return;
         };
         self.status = Status::Syncing;
-        self.syncing = Some(Task::spawn(ctx, move || grader.sync()));
+        let (progress, waker) = (self.progress.clone(), ctx.clone());
+        *progress.lock().unwrap_or_else(|e| e.into_inner()) = (0, 0);
+        self.syncing = Some(Task::spawn(ctx, move || {
+            grader.sync(&|done, all| {
+                *progress.lock().unwrap_or_else(|e| e.into_inner()) = (done, all);
+                waker.request_repaint();
+            })
+        }));
     }
 
     pub fn poll(&mut self) {
@@ -76,6 +91,13 @@ impl Reviews {
         }
     }
 
+    pub fn syncing_text(&self) -> String {
+        match *self.progress.lock().unwrap_or_else(|e| e.into_inner()) {
+            (done, all) if all > 1 => format!("reading your decks, {} of {all}…", (done + 1).min(all)),
+            _ => "syncing…".into(),
+        }
+    }
+
     pub fn summary(&self) -> String {
         let name = match self.settings.reviews {
             ReviewSource::None => return "Off: words aren't coloured".into(),
@@ -84,7 +106,7 @@ impl Reviews {
         };
         match &self.status {
             Status::Off => format!("{name}: not set up"),
-            Status::Syncing => format!("{name}: syncing…"),
+            Status::Syncing => format!("{name}: {}", self.syncing_text()),
             Status::Synced => format!("{name}: up to date"),
             Status::Failed(e) => format!("{name}: couldn't sync, {e}"),
         }

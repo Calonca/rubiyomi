@@ -23,6 +23,8 @@ pub struct Word {
     pub spelling: String,
     pub reading: String,
     pub meanings: Vec<String>,
+    // JMdict's part-of-speech tags, such as v5r or adj-i.
+    pub pos: Vec<String>,
     pub jmdict_id: Option<u32>,
 }
 
@@ -151,6 +153,7 @@ fn word(w: &Merged, surface: &str, reading: &str, entry: Option<&Entry>) -> Word
             out.reading = e.kana.iter().find(|k| *k == hint).or(e.kana.first()).cloned().unwrap_or_default();
             out.meanings = e.senses.clone();
             out.jmdict_id = Some(e.id);
+            out.pos = e.pos.clone();
         }
         None => {
             out.reading = if reading.is_empty() && surface.chars().all(is_katakana) { to_hiragana(surface) } else { reading.to_owned() };

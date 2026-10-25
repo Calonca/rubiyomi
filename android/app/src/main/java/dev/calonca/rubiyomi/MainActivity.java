@@ -194,4 +194,13 @@ public class MainActivity extends NativeActivity {
         CharSequence text = clip.getItemAt(0).coerceToText(this);
         return text == null ? null : text.toString();
     }
+
+    public void copyText(String text) {
+        runOnUiThread(() -> {
+            android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Rubiyomi", text));
+            }
+        });
+    }
 }

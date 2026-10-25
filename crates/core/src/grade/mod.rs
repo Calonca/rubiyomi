@@ -49,10 +49,18 @@ pub trait Grader: Send + Sync {
         &[]
     }
 
-    // Fetches what is needed to colour words without asking per word.
-    fn sync(&self) -> Result<(), GradeError>;
+    // Fetches what is needed to colour words without asking per word, telling
+    // how far it is (steps done, steps in all).
+    fn sync(&self, progress: &dyn Fn(usize, usize)) -> Result<(), GradeError>;
 
+    // Answers from what is known on the device, without asking anyone.
     fn states(&self, words: &[Word]) -> StateMap;
+
+    // Asks for fresh states of these words, for the next `states`.
+    fn refresh(&self, words: &[Word]) -> Result<(), GradeError> {
+        let _ = words;
+        Ok(())
+    }
 
     fn grade(&self, word: &Word, value: u8, sentence: &str) -> Result<CardState, GradeError>;
 

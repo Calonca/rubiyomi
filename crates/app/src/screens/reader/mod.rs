@@ -42,6 +42,7 @@ struct Colours {
     // Sorted by start, in chapter offsets.
     words: Arc<Vec<Word>>,
     states: StateMap,
+    asked: bool,
 }
 
 pub struct ReaderScreen {
@@ -65,6 +66,7 @@ pub struct ReaderScreen {
     drag: egui::Vec2,
     colours: Option<Colours>,
     colouring: Option<Task<Colours>>,
+    asking: Option<Task<(usize, StateMap)>>,
     grading: Option<Task<Reviewed>>,
 }
 
@@ -94,6 +96,7 @@ impl ReaderScreen {
             drag: egui::Vec2::ZERO,
             colours: None,
             colouring: None,
+            asking: None,
             grading: None,
         };
         reader.runs = reader.chapter_runs();
@@ -256,6 +259,7 @@ impl ReaderScreen {
             self.save(cx.library);
         }
         self.colour(&ctx, cx);
+        self.ask_fresh(&ctx, cx);
         self.poll_grading(&ctx, cx);
         self.page_ui(ui, cx, area);
 
@@ -466,11 +470,49 @@ impl ReaderScreen {
                 Arc::new(all)
             });
             let states = grader.states(&words);
-            Colours { index, generation, words, states }
+            Colours { index, generation, words, states, asked: false }
         }));
     }
 
-    fn review(&mut self, ctx: &egui::Context, cx: &Ctx<'_>, action: Action) {
+    // The saved states show at once; fresh ones follow when the reviews service answers.
+    fn ask_fresh(&mut self, ctx: &egui::Context, cx: &Ctx<'_>) {
+        if let Some((index, states)) = task::take(&mut self.asking)
+            && let Some(c) = self.colours.as_mut().filter(|c| c.index == index)
+        {
+            c.states = states;
+        }
+        let Some(grader) = cx.grader else { return };
+        let Some(c) = self.colours.as_mut().filter(|c| c.index == self.index && !c.asked) else { return };
+        if self.asking.is_some() {
+            return;
+        }
+        c.asked = true;
+        let (grader, words, index) = (grader.clone(), c.words.clone(), c.index);
+        self.asking = Some(Task::spawn(ctx, move || {
+            if let Err(e) = grader.refresh(&words) {
+                log::warn!("asking for card states: {e}");
+            }
+            (index, grader.states(&words))
+        }));
+    }
+
+    fn review(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>, action: Action) {
+        match &action {
+            Action::Open(url) => {
+                if !cx.platform.open_url(url) {
+                    cx.snackbar.show(ctx, "Couldn't open the link");
+                }
+                return;
+            }
+            Action::Copy(text) => {
+                if !cx.platform.copy_text(text) {
+                    ctx.copy_text(text.clone());
+                }
+                cx.snackbar.show(ctx, "Copied");
+                return;
+            }
+            _ => {}
+        }
         let (Some(grader), Some(popup)) = (cx.grader, &mut self.popup) else { return };
         let Content::Word(word) = &popup.content else { return };
         if self.grading.is_some() {
@@ -479,10 +521,11 @@ impl ReaderScreen {
         popup.busy = true;
         let (grader, word, sentence) = (grader.clone(), word.clone(), popup.sentence.clone());
         self.grading = Some(Task::spawn(ctx, move || {
-            let result = match action {
-                Action::Grade(value) => grader.grade(&word, value, &sentence),
+            let result = match &action {
+                Action::Grade(value) => grader.grade(&word, *value, &sentence),
                 Action::Add => grader.add(&word, &sentence),
                 Action::Act(what) => grader.act(&word, what, &sentence),
+                Action::Open(_) | Action::Copy(_) => unreachable!("handled before"),
             };
             (word, action, result)
         }));
@@ -507,6 +550,7 @@ impl ReaderScreen {
                     Action::Grade(_) => format!("Graded {} · {}", word.spelling, state.label()),
                     Action::Add => format!("Added {} · {}", word.spelling, state.label()),
                     Action::Act(what) => format!("{} · {what}", word.spelling),
+                    Action::Open(_) | Action::Copy(_) => String::new(),
                 };
                 cx.snackbar.show(ctx, done);
             }

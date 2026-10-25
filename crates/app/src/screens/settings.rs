@@ -185,7 +185,10 @@ pub fn status(ui: &mut egui::Ui, s: &Scheme, reviews: &Reviews, unsaved: bool) {
         Status::Syncing => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                hint(ui, s, "Syncing…");
+                let text = reviews.syncing_text();
+                let mut first = text.chars();
+                let text: String = first.next().map(|c| c.to_uppercase().chain(first).collect()).unwrap_or_default();
+                hint(ui, s, &text);
             });
         }
         Status::Synced => hint(ui, s, "Up to date"),

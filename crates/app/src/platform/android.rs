@@ -221,6 +221,14 @@ impl Platform for Android {
         .flatten()
     }
 
+    fn copy_text(&self, text: &str) -> bool {
+        self.with_activity("copyText", |env, a| {
+            let text = env.new_string(text)?;
+            env.call_method(a, "copyText", "(Ljava/lang/String;)V", &[(&text).into()]).map(|_| ())
+        })
+        .is_some()
+    }
+
     fn secret(&self, name: &str) -> Option<String> {
         self.with_activity("secret", |env, a| {
             let name = env.new_string(name)?;

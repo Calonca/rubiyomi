@@ -116,8 +116,9 @@ impl Grader for AnkiGrader {
         &GRADES
     }
 
-    fn sync(&self) -> Result<(), GradeError> {
+    fn sync(&self, progress: &dyn Fn(usize, usize)) -> Result<(), GradeError> {
         self.check()?;
+        progress(0, 1);
         let ids = self.backend.find_notes(&self.mapping.search())?;
         let fields = self.backend.fields(&self.mapping.note_type)?;
         let word_at = fields

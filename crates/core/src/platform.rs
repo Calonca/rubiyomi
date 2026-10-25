@@ -63,6 +63,12 @@ pub trait Platform: Send + Sync {
         None
     }
 
+    // False where egui's own clipboard works.
+    fn copy_text(&self, text: &str) -> bool {
+        let _ = text;
+        false
+    }
+
     // Keys go to the system's own store, never into our files. An empty value forgets one.
     fn secret(&self, name: &str) -> Option<String> {
         let _ = name;

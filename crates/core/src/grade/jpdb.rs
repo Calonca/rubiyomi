@@ -34,7 +34,9 @@ impl From<JpdbError> for GradeError {
 }
 
 // jpdb.io's vid is the JMdict entry id, so words found offline are matched to
-// the synced decks by it.
+// the synced decks by it. A sync learns only which cards the decks hold, which
+// is quick; the states are asked for the words of the chapter being read, and
+// kept for reading offline.
 pub struct JpdbGrader {
     client: JpdbClient,
     deck: String,
@@ -47,6 +49,12 @@ impl JpdbGrader {
         let path = data_dir.join("jpdb-decks.json");
         let synced = read_json_or_default(&path);
         JpdbGrader { client, deck: deck.to_owned(), synced: Mutex::new(synced), path }
+    }
+
+    fn save(&self, map: &HashMap<u64, Vec<Vocabulary>>) {
+        if let Err(e) = write_json(&self.path, map) {
+            log::warn!("saving the jpdb.io decks: {e}");
+        }
     }
 
     fn in_decks(&self, word: &Word) -> Option<Vocabulary> {
@@ -104,24 +112,26 @@ impl Grader for JpdbGrader {
         &[NEVER_FORGET, BLACKLIST]
     }
 
-    fn sync(&self) -> Result<(), GradeError> {
+    fn sync(&self, progress: &dyn Fn(usize, usize)) -> Result<(), GradeError> {
+        let decks: Vec<String> =
+            self.client.decks()?.into_iter().map(|d| d.id).chain(["never-forget".into(), "blacklist".into()]).collect();
         let mut pairs = Vec::new();
-        for deck in self.client.decks()? {
-            pairs.extend(self.client.deck_vocabulary(&deck.id)?);
-        }
-        for special in ["never-forget", "blacklist"] {
-            pairs.extend(self.client.deck_vocabulary(special)?);
+        for (i, deck) in decks.iter().enumerate() {
+            progress(i, decks.len());
+            pairs.extend(self.client.deck_vocabulary(deck)?);
         }
         pairs.sort_by_key(|i| (i.vid, i.sid));
         pairs.dedup();
+        let mut synced = self.synced.lock().unwrap_or_else(|e| e.into_inner());
+        let old = std::mem::take(&mut *synced);
+        let known = |ids: JpdbIds| old.get(&ids.vid).and_then(|l| l.iter().find(|v| v.ids == ids)).cloned();
         let mut map: HashMap<u64, Vec<Vocabulary>> = HashMap::new();
-        for v in self.client.lookup(&pairs)?.into_iter().flatten() {
-            map.entry(v.ids.vid).or_default().push(v);
+        for ids in pairs {
+            let v = known(ids).unwrap_or(Vocabulary { ids, spelling: String::new(), reading: String::new(), states: Vec::new() });
+            map.entry(ids.vid).or_default().push(v);
         }
-        if let Err(e) = write_json(&self.path, &map) {
-            log::warn!("saving the jpdb.io decks: {e}");
-        }
-        *self.synced.lock().unwrap_or_else(|e| e.into_inner()) = map;
+        self.save(&map);
+        *synced = map;
         Ok(())
     }
 
@@ -131,6 +141,27 @@ impl Grader for JpdbGrader {
             .filter(|w| w.jmdict_id.is_some())
             .map(|w| (w.key(), self.in_decks(w).map_or(CardState::NotInDeck, |v| CardState::primary_of(&v.states))))
             .collect()
+    }
+
+    fn refresh(&self, words: &[Word]) -> Result<(), GradeError> {
+        let mut ids: Vec<JpdbIds> = {
+            let synced = self.synced.lock().unwrap_or_else(|e| e.into_inner());
+            words.iter().filter_map(|w| synced.get(&(w.jmdict_id? as u64))).flatten().map(|v| v.ids).collect()
+        };
+        ids.sort_by_key(|i| (i.vid, i.sid));
+        ids.dedup();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let found = self.client.lookup(&ids)?;
+        let mut synced = self.synced.lock().unwrap_or_else(|e| e.into_inner());
+        for v in found.into_iter().flatten() {
+            if let Some(slot) = synced.get_mut(&v.ids.vid).and_then(|l| l.iter_mut().find(|o| o.ids == v.ids)) {
+                *slot = v;
+            }
+        }
+        self.save(&synced);
+        Ok(())
     }
 
     fn grade(&self, word: &Word, value: u8, sentence: &str) -> Result<CardState, GradeError> {
@@ -205,8 +236,11 @@ mod tests {
     fn grades_and_adds_send_jpdb_ids_and_stick() {
         let mock = server();
         let grader = JpdbGrader::new(JpdbClient::with_transport("k", mock.clone()), "5", &tempdir("jpdb-grade"));
-        grader.sync().unwrap();
+        grader.sync(&|_, _| {}).unwrap();
+        assert!(mock.requests().iter().all(|r| !r.url.ends_with("lookup-vocabulary")), "a sync reads the decks only");
         let cat = word("猫", "ねこ", 100);
+        assert_eq!(grader.states(std::slice::from_ref(&cat))[&cat.key()], CardState::Unknown, "in a deck, state not asked yet");
+        grader.refresh(std::slice::from_ref(&cat)).unwrap();
         assert_eq!(grader.states(std::slice::from_ref(&cat))[&cat.key()], CardState::Learning);
         assert_eq!(grader.grade(&cat, 4, "").unwrap(), CardState::Learning);
         let dog = word("犬", "いぬ", 300);
@@ -225,7 +259,7 @@ mod tests {
     fn no_key_no_call() {
         let mock = server();
         let grader = JpdbGrader::new(JpdbClient::with_transport(" ", mock.clone()), "5", &tempdir("jpdb-nokey"));
-        assert_eq!(grader.sync(), Err(GradeError::Auth));
+        assert_eq!(grader.sync(&|_, _| {}), Err(GradeError::Auth));
         assert!(mock.requests().is_empty());
     }
 }

@@ -250,6 +250,23 @@ pub fn text_button(ui: &mut Ui, s: &Scheme, label: &str) -> Response {
     response
 }
 
+pub fn tonal_button(ui: &mut Ui, s: &Scheme, label: &str) -> Response {
+    let (fill, ink) = (c(s.secondary_container), c(s.on_secondary_container));
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font(text::LABEL_LARGE), ink);
+    let (rect, response) = ui.allocate_exact_size(vec2(galley.size().x + 32.0, 40.0), Sense::click());
+    ui.painter().rect_filled(rect, CornerRadius::same(20), blend(fill, ink, state_layer(&response)));
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, ink);
+    response
+}
+
+pub fn outlined_chip(ui: &mut Ui, label: &str, colour: Color32) -> Response {
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font(text::LABEL_MEDIUM), colour);
+    let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(16.0, 6.0), Sense::hover());
+    ui.painter().rect_stroke(rect, CornerRadius::same(8), Stroke::new(1.0, colour), egui::StrokeKind::Inside);
+    ui.painter().galley(rect.min + vec2(8.0, 3.0), galley, colour);
+    response
+}
+
 pub fn row(ui: &mut Ui, s: &Scheme, headline: &str, supporting: &str, selected: bool) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 56.0), Sense::click());
     let base = if selected { alpha(c(s.secondary_container), 1.0) } else { Color32::TRANSPARENT };
