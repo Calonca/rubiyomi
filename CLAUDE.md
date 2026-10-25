@@ -34,7 +34,7 @@ Run builds through `slotq` (APK: `--cpus 6 --mem 6G`).
   a build to hand out or for performance measurements.
 - `tool/android-build.sh release` — signed APK plus AAB, with the upload key
   from `android/keystore.properties` or `RUBIYOMI_KEYSTORE*`; never commit a
-  key. A `v*` tag runs `release.yml` with the key from the repo's secrets.
+  key. A `v*` tag runs `release.yml` with the key from the `release` environment's secrets.
 - `cargo test --workspace --profile fast` — the tests; `tool/check.sh` runs
   all of CI's checks locally.
 - `tool/icon.py ZenOldMincho-Bold.ttf` regenerates the launcher icon layers and

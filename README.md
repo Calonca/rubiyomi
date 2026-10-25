@@ -46,7 +46,7 @@ The APK needs the Android SDK, NDK 28 and `cargo-ndk`.
 bundle. The upload key stays outside the repository: point
 `android/keystore.properties` at it (see `keystore.properties.example`) or set
 the `RUBIYOMI_KEYSTORE*` variables. A `v*` tag builds both on GitHub, with
-the key from the repository's secrets, into a draft release.
+the key from the `release` environment's secrets, into a draft release.
 
 ## Licence
 
