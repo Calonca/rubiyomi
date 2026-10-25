@@ -141,6 +141,7 @@ impl LibraryScreen {
         let Some(meta) = self.confirm_remove.clone() else { return };
         let mut close = false;
         let modal = egui::Modal::new(egui::Id::new("remove-book")).show(ctx, |ui| {
+            m3::show_next_frame(ui);
             ui.set_width(320.0_f32.min(ctx.content_rect().width() - 48.0));
             ui.label(egui::RichText::new("Remove this book?").font(font(text::HEADLINE_SMALL)));
             ui.add_space(8.0);

@@ -488,3 +488,11 @@ pub fn scroll() -> egui::ScrollArea {
     let area = egui::ScrollArea::vertical();
     if cfg!(target_os = "android") { area.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden) } else { area }
 }
+
+// A dialog is laid out unseen in its first frame and shown in the next, which egui
+// draws only when something asks for it: opened by a tap, nothing else does.
+pub fn show_next_frame(ui: &Ui) {
+    if ui.is_sizing_pass() {
+        ui.ctx().request_repaint();
+    }
+}

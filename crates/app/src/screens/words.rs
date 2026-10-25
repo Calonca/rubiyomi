@@ -138,6 +138,7 @@ impl WordsScreen {
     fn clear_dialog(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>) {
         let s = cx.scheme;
         let modal = egui::Modal::new(egui::Id::new("clear-words")).show(ctx, |ui| {
+            m3::show_next_frame(ui);
             ui.set_width(320.0_f32.min(ctx.content_rect().width() - 48.0));
             ui.label(RichText::new("Clear all words?").font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
             ui.add_space(8.0);

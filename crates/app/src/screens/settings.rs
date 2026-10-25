@@ -154,6 +154,7 @@ impl SettingsScreen {
         let mut answer = None;
         // Only an answer closes it: a tap beside it would lose the choice, or the changes.
         egui::Modal::new(egui::Id::new("unsaved-reviews")).show(ctx, |ui| {
+            m3::show_next_frame(ui);
             ui.set_width(320.0_f32.min(ctx.content_rect().width() - 48.0));
             ui.label(RichText::new("Save changes?").font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
             ui.add_space(8.0);
@@ -164,7 +165,7 @@ impl SettingsScreen {
             );
             ui.add_space(16.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if m3::text_button(ui, s, "Save").clicked() {
+                if complete(&self.form.draft) && m3::text_button(ui, s, "Save").clicked() {
                     answer = Some(true);
                 }
                 if m3::text_button(ui, s, "Discard").clicked() {
@@ -175,7 +176,8 @@ impl SettingsScreen {
                 }
             });
         });
-        let (Some(save), Some(to)) = (answer, self.leaving.take()) else { return };
+        let Some(save) = answer else { return };
+        let Some(to) = self.leaving.take() else { return };
         if save {
             reviews.apply(ctx, platform, self.form.draft.clone());
         } else {
@@ -203,7 +205,9 @@ impl SettingsScreen {
                 return;
             }
             ui.add_space(16.0);
-            if m3::filled_button(ui, s, "Save and sync").clicked() {
+            if !complete(&self.form.draft) {
+                hint(ui, s, "To save, choose a deck, a note type and the field that holds the word.");
+            } else if m3::filled_button(ui, s, "Save and sync").clicked() {
                 reviews.apply(ui.ctx(), platform, self.form.draft.clone());
             }
             ui.add_space(8.0);
@@ -272,6 +276,11 @@ fn words(ui: &mut egui::Ui, s: &Scheme, t: &str) {
 
 fn link(t: &str) -> RichText {
     RichText::new(t).font(font(text::BODY_LARGE))
+}
+
+// Anki can't sync, or grade, without knowing where the word is.
+fn complete(draft: &rubiyomi_core::settings::Settings) -> bool {
+    draft.reviews != ReviewSource::Anki || draft.anki.is_set()
 }
 
 pub fn status(ui: &mut egui::Ui, s: &Scheme, reviews: &Reviews, unsaved: bool) {
