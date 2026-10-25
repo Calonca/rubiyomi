@@ -52,6 +52,11 @@ pub trait Grader: Send + Sync {
         &[]
     }
 
+    // Where the word can be seen on the service, as (label, url).
+    fn link(&self, _word: &Word) -> Option<(&'static str, String)> {
+        None
+    }
+
     // Fetches what is needed to colour words without asking per word, telling
     // how far it is (steps done, steps in all).
     fn sync(&self, progress: &dyn Fn(usize, usize)) -> Result<(), GradeError>;

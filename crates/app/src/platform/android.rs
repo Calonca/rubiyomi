@@ -285,6 +285,11 @@ impl AnkiBackend for AnkiDroid {
         Ok(v.as_array().into_iter().flatten().filter_map(|n| Some(Note { id: n["id"].as_u64()?, fields: strings(&n["fields"]) })).collect())
     }
 
+    fn suspend(&self, note: u64) -> Result<(), GradeError> {
+        self.android.anki_call("suspend", &json!({ "note": note }))?;
+        Ok(())
+    }
+
     fn answer(&self, note: u64, ease: u8) -> Result<(), GradeError> {
         let changed = self.android.anki_call("answer", &json!({ "note": note, "ease": ease }))?;
         // AnkiDroid ignores a grade for a card that isn't due.

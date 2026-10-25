@@ -6,7 +6,7 @@ use std::ops::Range;
 use egui::{Align, Color32, CornerRadius, Layout, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use egui_material_icons::MaterialIcon;
 use egui_material_icons::icons::{
-    ICON_ADD, ICON_ALL_INCLUSIVE, ICON_BLOCK, ICON_CLOSE, ICON_CONTENT_COPY, ICON_MORE_HORIZ, ICON_OPEN_IN_NEW,
+    ICON_ADD, ICON_ALL_INCLUSIVE, ICON_BLOCK, ICON_CLOSE, ICON_CONTENT_COPY, ICON_MORE_HORIZ, ICON_OPEN_IN_NEW, ICON_PAUSE,
 };
 use rubiyomi_core::cards::CardState;
 use rubiyomi_core::finder::Word;
@@ -212,11 +212,15 @@ impl Popup {
         if option_tile(ui, s, ICON_CONTENT_COPY, "Copy", true) {
             action = Some(Action::Copy(word.spelling.clone()));
         }
-        // jpdb.io's vocabulary ids are JMdict's.
-        if let Some(id) = word.jmdict_id
-            && option_tile(ui, s, ICON_OPEN_IN_NEW, "Open on jpdb.io", true)
+        // Without reviews, jpdb.io still serves as a dictionary to look further in.
+        let link = match grader {
+            Some(g) => g.link(word),
+            None => rubiyomi_core::jpdb::vocabulary_url(word).map(|url| ("Open on jpdb.io", url)),
+        };
+        if let Some((label, url)) = link
+            && option_tile(ui, s, ICON_OPEN_IN_NEW, label, true)
         {
-            action = Some(Action::Open(format!("https://jpdb.io/vocabulary/{id}/{}", urlencode(&word.spelling))));
+            action = Some(Action::Open(url));
         }
         let Some(g) = grader.filter(|_| word.jmdict_id.is_some()) else { return action };
         if let Some(deck) = g.deck_name()
@@ -225,7 +229,11 @@ impl Popup {
             action = Some(Action::Add);
         }
         for &a in g.actions() {
-            let icon = if a.contains("lacklist") { ICON_BLOCK } else { ICON_ALL_INCLUSIVE };
+            let icon = match a {
+                "Blacklist" => ICON_BLOCK,
+                "Suspend" => ICON_PAUSE,
+                _ => ICON_ALL_INCLUSIVE,
+            };
             if option_tile(ui, s, icon, a, !self.busy) {
                 action = Some(Action::Act(a));
             }
@@ -384,12 +392,4 @@ fn pos_labels(tags: &[String]) -> Vec<&'static str> {
     }
     out.truncate(4);
     out
-}
-
-fn urlencode(s: &str) -> String {
-    s.bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') { (b as char).to_string() } else { format!("%{b:02X}") }
-        })
-        .collect()
 }

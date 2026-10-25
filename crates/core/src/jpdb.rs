@@ -10,6 +10,18 @@ use crate::cards::{CardState, JpdbIds};
 use crate::http::{self, Request, Transport};
 
 const BASE: &str = "https://jpdb.io/api/v1/";
+
+// jpdb.io's vocabulary ids are JMdict's.
+pub fn vocabulary_url(word: &crate::finder::Word) -> Option<String> {
+    let spelling: String = word
+        .spelling
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') { (b as char).to_string() } else { format!("%{b:02X}") }
+        })
+        .collect();
+    Some(format!("https://jpdb.io/vocabulary/{}/{spelling}", word.jmdict_id?))
+}
 const MINIMUM_GAP: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, PartialEq, Eq)]

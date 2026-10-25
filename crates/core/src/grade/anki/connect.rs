@@ -103,6 +103,12 @@ impl AnkiBackend for AnkiConnect {
         }
     }
 
+    fn suspend(&self, note: u64) -> Result<(), GradeError> {
+        let cards = ids(self.call("findCards", json!({ "query": format!("nid:{note}") }))?);
+        self.call("suspend", json!({ "cards": cards }))?;
+        Ok(())
+    }
+
     fn add_note(&self, deck: &str, note_type: &str, fields: &[(String, String)], tags: &[&str]) -> Result<u64, GradeError> {
         let fields: serde_json::Map<String, Value> = fields.iter().map(|(k, v)| (k.clone(), Value::from(v.clone()))).collect();
         let r = self.call(

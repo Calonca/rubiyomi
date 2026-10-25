@@ -59,6 +59,7 @@ pub trait AnkiBackend: Send + Sync {
     fn notes(&self, ids: &[u64]) -> Result<Vec<Note>, GradeError>;
     fn answer(&self, note: u64, ease: u8) -> Result<(), GradeError>;
     fn add_note(&self, deck: &str, note_type: &str, fields: &[(String, String)], tags: &[&str]) -> Result<u64, GradeError>;
+    fn suspend(&self, note: u64) -> Result<(), GradeError>;
 }
 
 pub struct AnkiGrader {
@@ -118,6 +119,10 @@ impl Grader for AnkiGrader {
 
     fn deck_name(&self) -> Option<String> {
         (!self.mapping.deck.is_empty()).then(|| self.mapping.deck.clone())
+    }
+
+    fn actions(&self) -> &'static [&'static str] {
+        &[SUSPEND]
     }
 
     fn sync(&self, progress: &dyn Fn(usize, usize)) -> Result<(), GradeError> {
@@ -192,7 +197,21 @@ impl Grader for AnkiGrader {
         self.states.lock().unwrap_or_else(|e| e.into_inner()).insert(id, CardState::New);
         Ok(CardState::New)
     }
+
+    fn act(&self, word: &Word, action: &str, _sentence: &str) -> Result<CardState, GradeError> {
+        if action != SUSPEND {
+            return Err(GradeError::Other("not available".into()));
+        }
+        self.check()?;
+        let note =
+            self.note_of(word).ok_or_else(|| GradeError::NotFound(format!("{} isn't in your Anki deck: add it first", word.spelling)))?;
+        self.backend.suspend(note)?;
+        self.states.lock().unwrap_or_else(|e| e.into_inner()).insert(note, CardState::Suspended);
+        Ok(CardState::Suspended)
+    }
 }
+
+const SUSPEND: &str = "Suspend";
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")

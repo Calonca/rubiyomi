@@ -68,6 +68,9 @@ final class AnkiDroidBridge {
                 case "answer":
                     result = answer(args.getLong("note"), args.getInt("ease"));
                     break;
+                case "suspend":
+                    result = suspend(args.getLong("note"));
+                    break;
                 case "addNote":
                     result = addNote(args);
                     break;
@@ -163,6 +166,14 @@ final class AnkiDroidBridge {
         v.put("ord", 0);
         v.put("answer_ease", ease);
         v.put("time_taken", 5000L);
+        return resolver().update(SCHEDULE, v, null, null);
+    }
+
+    private int suspend(long note) {
+        ContentValues v = new ContentValues();
+        v.put("note_id", note);
+        v.put("ord", 0);
+        v.put("suspended", 1);
         return resolver().update(SCHEDULE, v, null, null);
     }
 

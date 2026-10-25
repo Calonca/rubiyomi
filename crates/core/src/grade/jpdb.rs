@@ -113,6 +113,10 @@ impl Grader for JpdbGrader {
         &[NEVER_FORGET, BLACKLIST]
     }
 
+    fn link(&self, word: &Word) -> Option<(&'static str, String)> {
+        Some(("Open on jpdb.io", crate::jpdb::vocabulary_url(word)?))
+    }
+
     fn deck_name(&self) -> Option<String> {
         (!self.deck.trim().is_empty()).then(|| if self.deck_name.is_empty() { self.deck.clone() } else { self.deck_name.clone() })
     }

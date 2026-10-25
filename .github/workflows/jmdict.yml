@@ -1,0 +1,31 @@
+name: JMdict
+
+# Once a month, a pull request moving the bundled dictionary to the newest
+# jmdict-simplified English release.
+on:
+  schedule:
+    - cron: "17 5 3 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - id: bump
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "version=$(tool/bump-jmdict.sh)" >> "$GITHUB_OUTPUT"
+      - if: steps.bump.outputs.version != ''
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: jmdict-bump
+          commit-message: "JMdict ${{ steps.bump.outputs.version }}"
+          title: "JMdict ${{ steps.bump.outputs.version }}"
+          body: |
+            Moves the bundled dictionary to jmdict-simplified ${{ steps.bump.outputs.version }} (English), with its checksum.
+            Run `cargo xtask dict` and check the app before merging.
