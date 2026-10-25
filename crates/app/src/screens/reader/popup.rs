@@ -45,8 +45,9 @@ pub struct Popup {
     pub message: Option<String>,
     // The card's other face: what can be done with the word.
     options: bool,
-    at: Option<Pos2>,
-    size: Vec2,
+    // Unknown until the card has been laid out once; until then it is drawn invisibly.
+    size: Option<Vec2>,
+    shown_at: Option<f64>,
 }
 
 fn width_for(screen: f32) -> f32 {
@@ -90,30 +91,27 @@ impl Popup {
             busy: false,
             message: None,
             options: false,
-            at: None,
-            size: vec2(MAX_WIDTH, 120.0),
+            size: None,
+            shown_at: None,
         }
     }
 
     pub fn ui(&mut self, ctx: &egui::Context, s: &Scheme, grader: Option<&dyn Grader>) -> Option<Action> {
         let screen = ctx.content_rect();
         let width = width_for(screen.width()).min(screen.width());
-        let target = place(screen, self.size, self.anchor);
-        // Each frame the card closes a share of the way left, so it glides to a new word.
-        let at = match self.at {
-            Some(at) => {
-                let share = 1.0 - (-ctx.input(|i| i.stable_dt).min(0.1) / 0.06).exp();
-                let next = at + (target - at) * share;
-                if (target - next).length() >= 0.5 {
-                    ctx.request_repaint();
-                    next
-                } else {
-                    target
-                }
+        let at = place(screen, self.size.unwrap_or(vec2(width, 0.0)), self.anchor);
+        let now = ctx.input(|i| i.time);
+        let opacity = match (self.size, self.shown_at) {
+            (None, _) => 0.0,
+            (Some(_), None) => {
+                self.shown_at = Some(now);
+                0.0
             }
-            None => target,
+            (Some(_), Some(t)) => ((now - t) / 0.12).clamp(0.0, 1.0) as f32,
         };
-        self.at = Some(at);
+        if opacity < 1.0 {
+            ctx.request_repaint();
+        }
         let dark = ctx.theme() == egui::Theme::Dark;
         let mut action = None;
         let response = egui::Area::new(egui::Id::new("word-popup")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
@@ -123,14 +121,15 @@ impl Popup {
                 .shadow(egui::Shadow { offset: [0, 3], blur: 10, spread: 3, color: Color32::from_black_alpha(170) })
                 .inner_margin(egui::Margin { left: 14, right: 8, top: 8, bottom: 8 })
                 .show(ui, |ui| {
+                    ui.multiply_opacity(opacity);
                     ui.set_width(width - 22.0);
                     ui.set_max_height(screen.height() * MAX_HEIGHT_FRACTION - 16.0);
                     action = self.body(ui, s, grader, dark);
                 });
         });
-        let rect = response.response.rect;
-        if (rect.size() - self.size).length() > 0.5 {
-            self.size = rect.size();
+        let size = response.response.rect.size();
+        if self.size.is_none_or(|old| (size - old).length() > 0.5) {
+            self.size = Some(size);
             ctx.request_repaint();
         }
         action

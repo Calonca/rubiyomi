@@ -354,7 +354,8 @@ impl ReaderScreen {
                 let c = colours?;
                 let w = &c.words[c.words.partition_point(|w| w.start <= offset).checked_sub(1)?];
                 (offset < w.start + w.len).then_some(())?;
-                Some(state_colour(*c.states.get(&w.key())?, dark)).filter(|c| *c != egui::Color32::TRANSPARENT)
+                let colour = state_colour(*c.states.get(&w.key())?, dark);
+                (colour != egui::Color32::TRANSPARENT).then_some((w.start, colour))
             };
             paint_page(ui.painter(), origin, &page, &options, ink);
         }

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
 
 use egui::epaint::TextShape;
-use egui::{Align2, Color32, FontFamily, FontId, Painter, Pos2, Stroke, pos2, vec2};
+use egui::{Align2, Color32, FontFamily, FontId, Painter, Pos2, vec2};
 use rubiyomi_core::reader::layout::{Form, Measure, Page, PlacedGlyph, Rect};
 
 pub struct EguiMeasure {
@@ -45,16 +45,28 @@ pub struct PaintOptions {
     pub ruby: Color32,
 }
 
-// Each word is underlined in the colour of its card, the text left as it is.
-pub fn paint_page(painter: &Painter, origin: Pos2, page: &Page, o: &PaintOptions, underline: impl Fn(usize) -> Option<Color32>) {
+// Each word sits on a wash in the colour of its card, given by `word` as the
+// word's start and colour. One box per word per line: glyph by glyph, the
+// boxes would overlap and darken at the seams.
+pub fn paint_page(painter: &Painter, origin: Pos2, page: &Page, o: &PaintOptions, word: impl Fn(usize) -> Option<(usize, Color32)>) {
+    let mut wash: Option<(usize, Color32, egui::Rect)> = None;
+    let flush = |w: Option<(usize, Color32, egui::Rect)>| {
+        if let Some((_, colour, rect)) = w {
+            painter.rect_filled(rect.expand2(vec2(1.0, 1.0)), 3.0, colour.gamma_multiply(0.22));
+        }
+    };
+    for g in page.glyphs.iter().filter(|g| !g.text.trim().is_empty()) {
+        let r = to_screen(origin, &g.rect);
+        match (word(g.offset), &mut wash) {
+            (Some((start, _)), Some((at, _, rect))) if *at == start && (rect.center().y - r.center().y).abs() < r.height() / 2.0 => {
+                *rect = rect.union(r);
+            }
+            (here, _) => flush(std::mem::replace(&mut wash, here.map(|(start, colour)| (start, colour, r)))),
+        }
+    }
+    flush(wash);
     for g in &page.glyphs {
         paint_glyph(painter, origin, g, &o.family, o.text);
-        if let Some(colour) = underline(g.offset).filter(|_| !g.text.trim().is_empty()) {
-            let r = to_screen(origin, &g.rect);
-            let thickness = (g.size * 0.055).max(1.0);
-            let y = r.bottom() + thickness;
-            painter.line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(thickness, colour));
-        }
     }
     for r in &page.ruby {
         let rect = to_screen(origin, &r.rect);
