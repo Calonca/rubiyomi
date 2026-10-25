@@ -203,6 +203,11 @@ impl Popup {
         if self.size.is_none_or(|old| (size - old).length() > 0.5) {
             self.size = Some(size);
             ctx.request_repaint();
+            // The first card is measured in egui's sizing pass, which can be off; while it
+            // is still unseen it waits for a size that holds, so it fades in where it stays.
+            if self.shown_at == Some(now) {
+                self.shown_at = None;
+            }
         }
         action
     }
