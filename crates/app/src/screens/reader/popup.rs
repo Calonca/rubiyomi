@@ -51,6 +51,8 @@ pub struct Popup {
     shown_at: Option<f64>,
     // Where the card is drawn, which follows where it belongs rather than jumping there.
     at: Option<Pos2>,
+    // How tall its content shows, following how tall it is.
+    height: Option<f32>,
 }
 
 fn width_for(screen: f32) -> f32 {
@@ -108,6 +110,17 @@ impl Popup {
             size: None,
             shown_at: None,
             at: None,
+            height: None,
+        }
+    }
+
+    // Shown in place of `old`, for another word: it moves over from there instead of fading in.
+    pub fn continue_from(&mut self, old: &Popup) {
+        if old.shown_at.is_some() {
+            self.at = old.at;
+            self.size = old.size;
+            self.height = old.height;
+            self.shown_at = Some(f64::NEG_INFINITY);
         }
     }
 
@@ -155,9 +168,34 @@ impl Popup {
                 .inner_margin(egui::Margin { left: 14, right: 8, top: 8, bottom: 8 })
                 .show(ui, |ui| {
                     ui.multiply_opacity(opacity);
-                    ui.set_width(width - 22.0);
-                    ui.set_max_height(screen.height() * MAX_HEIGHT_FRACTION - 16.0);
-                    action = self.body(ui, s, grader, dark);
+                    let inner = width - 22.0;
+                    ui.set_width(inner);
+                    // The content is laid out at its own height, and the card shows a height
+                    // that follows it: what grows or shrinks is revealed or hidden, not jumped to.
+                    let top = ui.cursor().min;
+                    let shown = self.height.unwrap_or(0.0);
+                    let room = Rect::from_min_size(top, vec2(inner, screen.height() * MAX_HEIGHT_FRACTION - 16.0));
+                    let mut content = ui.new_child(egui::UiBuilder::new().max_rect(room).layout(Layout::top_down(Align::Min)));
+                    if self.height.is_some() {
+                        content.set_clip_rect(Rect::from_min_size(top - vec2(14.0, 0.0), vec2(inner + 22.0, shown)).intersect(ui.clip_rect()));
+                    }
+                    action = self.body(&mut content, s, grader, dark);
+                    let natural = content.min_rect().height();
+                    let next = match self.height.filter(|_| self.shown_at.is_some()) {
+                        None => natural,
+                        Some(h) => {
+                            let dt = ctx.input(|i| i.stable_dt).min(0.1);
+                            let next = h + (natural - h) * (1.0 - (-dt / 0.06).exp());
+                            if (natural - next).abs() >= 0.5 {
+                                ctx.request_repaint();
+                                next
+                            } else {
+                                natural
+                            }
+                        }
+                    };
+                    self.height = Some(next);
+                    ui.allocate_space(vec2(inner, if self.shown_at.is_some() { shown.max(1.0) } else { natural }));
                 });
         });
         let size = response.response.rect.size();

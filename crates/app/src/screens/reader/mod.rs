@@ -734,12 +734,13 @@ impl ReaderScreen {
             let third = area.width() / 3.0;
             let edge = (p.x < area.left() + third) || (p.x > area.right() - third);
             self.active();
-            if self.popup.is_some() {
-                self.popup = None;
-            } else if !self.bar
+            // A word tapped with the card open takes the card over; anywhere else closes it.
+            if !self.bar
                 && let Some(offset) = self.glyph_at(p - rest)
             {
                 self.look_up(cx, rest, offset);
+            } else if self.popup.is_some() {
+                self.popup = None;
             } else if self.bar || !edge || !cx.page.tap_to_turn {
                 self.bar = !self.bar;
             } else {
@@ -823,6 +824,9 @@ impl ReaderScreen {
         self.pending.lookups += 1;
         popup.state = cx.grader.and_then(|g| g.states(std::slice::from_ref(&word)).get(&word.key()).copied());
         popup.busy = self.grading.is_some();
+        if let Some(old) = &self.popup {
+            popup.continue_from(old);
+        }
         self.mark = Some(popup.span.clone());
         self.popup = Some(popup);
         self.save(cx.library);
