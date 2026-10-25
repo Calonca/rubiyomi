@@ -11,9 +11,10 @@ use std::sync::Arc;
 use egui::{Align2, FontFamily, Sense, pos2, vec2};
 use egui_material_icons::icons::{ICON_ARROW_BACK, ICON_LIST, ICON_TEXT_FIELDS};
 use rubiyomi_core::cards::CardState;
-use rubiyomi_core::finder::Word;
+use rubiyomi_core::finder::{Finder, Word};
 use rubiyomi_core::grade::{GradeError, StateMap};
 use rubiyomi_core::history::Place;
+use rubiyomi_core::jpdb::JpdbClient;
 use rubiyomi_core::library::{BookMeta, Library, Progress, fsutil::now};
 use rubiyomi_core::reader::layout::{self, LayoutBlock, LayoutConfig, Page, page_for_offset};
 use rubiyomi_core::reader::runs::{Run, book_runs};
@@ -95,6 +96,8 @@ type Reviewed = (Word, Action, Result<CardState, GradeError>);
 struct Colours {
     index: usize,
     generation: u64,
+    // What the words were found with, so a change of finder finds them again.
+    tag: Option<String>,
     // Sorted by start, in chapter offsets.
     words: Arc<Vec<Word>>,
     states: StateMap,
@@ -783,9 +786,17 @@ impl ReaderScreen {
         let (block, local) = self.chapter.locate(offset);
         let Some(text) = self.chapter.blocks.get(block).and_then(Block::as_text) else { return };
         let block_start = self.chapter.block_start(block);
-        let found = match cx.finder {
-            Ok(finder) => finder.word_at(&text.text, local),
-            Err(note) => {
+        let parsed = self.colours.as_ref().filter(|c| cx.parser.is_some() && c.index == self.index && c.tag.as_deref() == cx.words_tag);
+        let parsed = parsed.and_then(|c| {
+            let w = &c.words[..c.words.partition_point(|w| w.start <= offset)];
+            w.last()
+                .filter(|w| offset < w.start + w.len && w.start >= block_start)
+                .map(|w| Word { start: w.start - block_start, ..w.clone() })
+        });
+        let found = match (parsed, cx.finder) {
+            (Some(word), _) => Some(word),
+            (None, Ok(finder)) => finder.word_at(&text.text, local),
+            (None, Err(note)) => {
                 let rect = self.span_rect(origin, offset..offset + 1);
                 self.popup = Some(Popup::new(rect, offset..offset + 1, Content::Message(note.to_owned())));
                 return;
@@ -845,11 +856,15 @@ impl ReaderScreen {
             }
             self.colours = Some(done);
         }
-        let Some(grader) = cx.grader else {
+        // Words found by jpdb.io are wanted for looking up too, so they're found without a grader.
+        if cx.grader.is_none() && cx.parser.is_none() {
             self.colours = None;
             return;
-        };
-        let fresh = self.colours.as_ref().is_some_and(|c| c.index == self.index && c.generation == cx.generation);
+        }
+        let grader = cx.grader.cloned();
+        let tag = cx.words_tag.map(str::to_owned);
+        let same = |c: &Colours| c.index == self.index && c.tag == tag;
+        let fresh = self.colours.as_ref().is_some_and(|c| same(c) && c.generation == cx.generation);
         if fresh || self.colouring.is_some() {
             if fresh {
                 self.prefetch(cx);
@@ -857,30 +872,34 @@ impl ReaderScreen {
             return;
         }
         let (index, generation) = (self.index, cx.generation);
-        let known = self.colours.as_ref().filter(|c| c.index == index).map(|c| c.words.clone());
+        let known = self.colours.as_ref().filter(|c| same(c)).map(|c| c.words.clone());
         if known.is_none()
-            && let Some(tag) = cx.words_tag
-            && let Some(words) = cx.library.cached_words(&self.meta.id, index, tag)
+            && let Some(t) = &tag
+            && let Some(words) = cx.library.cached_words(&self.meta.id, index, t)
         {
             let words = Arc::new(words);
-            let states = grader.states(&words);
-            self.colours = Some(Colours { index, generation, words, states, asked: false, shown: f64::NEG_INFINITY });
+            let states = grader.map(|g| g.states(&words)).unwrap_or_default();
+            self.colours = Some(Colours { index, generation, tag, words, states, asked: false, shown: f64::NEG_INFINITY });
             return;
         }
-        let Ok(finder) = cx.finder else { return };
-        let save = cx.words_tag.map(|tag| (cx.library.clone(), self.meta.id.clone(), tag.to_owned()));
-        let (grader, finder) = (grader.clone(), finder.clone());
+        let finder = cx.finder.ok().cloned();
+        if known.is_none() && finder.is_none() && cx.parser.is_none() {
+            return;
+        }
+        let save = tag.clone().map(|tag| (cx.library.clone(), self.meta.id.clone(), tag));
+        let parser = cx.parser.cloned();
         let chapter = if known.is_some() { None } else { Some(self.chapter.clone()) };
         self.colouring = Some(Task::spawn(ctx, move || {
             let words = known.unwrap_or_else(|| {
-                let words = finder.chapter_words(chapter.as_ref().expect("a chapter to split"));
-                if let Some((library, id, tag)) = &save {
+                let chapter = chapter.as_ref().expect("a chapter to split");
+                let (words, keep) = find_words(chapter, finder.as_deref(), parser.as_deref());
+                if keep && let Some((library, id, tag)) = &save {
                     library.cache_words(id, index, tag, &words);
                 }
                 Arc::new(words)
             });
-            let states = grader.states(&words);
-            Colours { index, generation, words, states, asked: false, shown: 0.0 }
+            let states = grader.map(|g| g.states(&words)).unwrap_or_default();
+            Colours { index, generation, tag, words, states, asked: false, shown: 0.0 }
         }));
     }
 
@@ -890,17 +909,21 @@ impl ReaderScreen {
         if next >= self.meta.chapters.len() || !self.prefetched.insert(next) {
             return;
         }
-        let (Some(tag), Ok(finder)) = (cx.words_tag, cx.finder) else {
+        let finder = cx.finder.ok().cloned();
+        let parser = cx.parser.cloned();
+        let Some(tag) = cx.words_tag.filter(|_| finder.is_some() || parser.is_some()) else {
             self.prefetched.remove(&next);
             return;
         };
         if cx.library.cached_words(&self.meta.id, next, tag).is_some() {
             return;
         }
-        let (library, id, tag, finder) = (cx.library.clone(), self.meta.id.clone(), tag.to_owned(), finder.clone());
+        let (library, id, tag) = (cx.library.clone(), self.meta.id.clone(), tag.to_owned());
         std::thread::spawn(move || {
-            if let Some(chapter) = library.chapter(&id, next) {
-                library.cache_words(&id, next, &tag, &finder.chapter_words(&chapter));
+            if let Some(chapter) = library.chapter(&id, next)
+                && let (words, true) = find_words(&chapter, finder.as_deref(), parser.as_deref())
+            {
+                library.cache_words(&id, next, &tag, &words);
             }
         });
     }
@@ -1157,4 +1180,17 @@ fn line_boxes(page: &Page, origin: egui::Pos2, span: &Range<usize>, vertical: bo
         }
     }
     lines
+}
+
+// A chapter's words, from jpdb.io when it parses, else from the finder on the device; and
+// whether they may be saved, which words found by the fallback may not.
+fn find_words(chapter: &Chapter, finder: Option<&Finder>, parser: Option<&JpdbClient>) -> (Vec<Word>, bool) {
+    if let Some(parser) = parser {
+        match parser.chapter_words(chapter) {
+            Ok(words) => return (words, true),
+            Err(e) => log::warn!("jpdb.io couldn't parse the chapter: {e}"),
+        }
+        return (finder.map(|f| f.chapter_words(chapter)).unwrap_or_default(), false);
+    }
+    (finder.map(|f| f.chapter_words(chapter)).unwrap_or_default(), true)
 }

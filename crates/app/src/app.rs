@@ -231,6 +231,8 @@ impl App {
             self.awake = awake;
             self.platform.keep_screen_on(awake);
         }
+        let jpdb_tag = rubiyomi_core::finder::jpdb_words_tag();
+        let words_tag = if self.reviews.parser.is_some() { Some(jpdb_tag.as_str()) } else { self.words_tag.as_deref() };
         let mut cx = Ctx {
             scheme: &s,
             platform: &*self.platform,
@@ -238,8 +240,9 @@ impl App {
             snackbar: &mut self.snackbar,
             finder: self.finder.as_ref().map_err(String::as_str),
             grader: self.reviews.grader.as_ref(),
+            parser: self.reviews.parser.as_ref(),
             generation: self.reviews.generation,
-            words_tag: self.words_tag.as_deref(),
+            words_tag,
             page: &mut self.page,
             history: &mut self.history,
             stats: &mut self.stats,

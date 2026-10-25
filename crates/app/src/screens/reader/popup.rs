@@ -177,7 +177,8 @@ impl Popup {
                     let room = Rect::from_min_size(top, vec2(inner, screen.height() * MAX_HEIGHT_FRACTION - 16.0));
                     let mut content = ui.new_child(egui::UiBuilder::new().max_rect(room).layout(Layout::top_down(Align::Min)));
                     if self.height.is_some() {
-                        content.set_clip_rect(Rect::from_min_size(top - vec2(14.0, 0.0), vec2(inner + 22.0, shown)).intersect(ui.clip_rect()));
+                        content
+                            .set_clip_rect(Rect::from_min_size(top - vec2(14.0, 0.0), vec2(inner + 22.0, shown)).intersect(ui.clip_rect()));
                     }
                     action = self.body(&mut content, s, grader, dark);
                     let natural = content.min_rect().height();

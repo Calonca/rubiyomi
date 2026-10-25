@@ -30,6 +30,7 @@ pub struct Ctx<'a> {
     pub snackbar: &'a mut Snackbar,
     pub finder: Result<&'a Arc<Finder>, &'a str>,
     pub grader: Option<&'a Arc<dyn Grader>>,
+    pub parser: Option<&'a Arc<rubiyomi_core::jpdb::JpdbClient>>,
     pub generation: u64,
     // What saved chapter words must have been found with to be used.
     pub words_tag: Option<&'a str>,

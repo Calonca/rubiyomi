@@ -26,6 +26,11 @@ pub fn words_tag(dict: &crate::dict::DictVersion) -> String {
     format!("{}-{WORDS_FORMAT}-{}-{}", crate::library::EXTRACT_VERSION, dict.jmdict, dict.ipadic)
 }
 
+// Words found by jpdb.io, which keeps them with their meanings.
+pub fn jpdb_words_tag() -> String {
+    format!("jpdb-{}-{WORDS_FORMAT}", crate::library::EXTRACT_VERSION)
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Word {

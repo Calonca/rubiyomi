@@ -21,6 +21,15 @@ pub enum ReviewSource {
     Anki,
 }
 
+// Who finds the words in the text: the dictionaries on the device, or jpdb.io.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Parser {
+    #[default]
+    Device,
+    Jpdb,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -34,6 +43,7 @@ pub struct Settings {
     #[serde(skip)]
     pub anki_key: String,
     pub anki: AnkiMapping,
+    pub parser: Parser,
 }
 
 impl Settings {

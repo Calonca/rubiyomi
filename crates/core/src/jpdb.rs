@@ -156,6 +156,90 @@ impl JpdbClient {
             .collect())
     }
 
+    // The words of each text as jpdb.io finds them, at char offsets into it, with
+    // their meanings: the reader's words when jpdb.io does the parsing.
+    pub fn parse_words(&self, texts: &[String]) -> Result<Vec<Vec<crate::finder::Word>>, JpdbError> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let json = self.post(
+            "parse",
+            json!({
+                "text": texts,
+                "token_fields": ["vocabulary_index", "position", "length"],
+                "vocabulary_fields": ["vid", "spelling", "reading", "meanings", "part_of_speech"],
+                // Char offsets, as the reader counts.
+                "position_length_encoding": "utf32",
+            }),
+        )?;
+        let vocabulary = rows(&json, "vocabulary");
+        let per_text = json.get("tokens").and_then(Value::as_array).cloned().unwrap_or_default();
+        Ok(per_text
+            .iter()
+            .map(|tokens| {
+                let mut words: Vec<crate::finder::Word> = tokens
+                    .as_array()
+                    .map(|l| l.iter().filter_map(Value::as_array).collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|t| {
+                        let v = vocabulary.get(t.first()?.as_u64()? as usize)?;
+                        let len = t.get(2)?.as_u64()? as usize;
+                        (len > 0).then_some(())?;
+                        Some(crate::finder::Word {
+                            start: t.get(1)?.as_u64()? as usize,
+                            len,
+                            spelling: text_at(v, 1),
+                            reading: text_at(v, 2),
+                            meanings: meanings(v.get(3)),
+                            pos: v
+                                .get(4)
+                                .and_then(Value::as_array)
+                                .map(|l| l.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                                .unwrap_or_default(),
+                            jmdict_id: v.first()?.as_u64().and_then(|id| u32::try_from(id).ok()),
+                        })
+                    })
+                    .collect();
+                words.sort_by_key(|w| w.start);
+                words
+            })
+            .collect())
+    }
+
+    // A chapter's words at chapter offsets, its blocks sent a few thousand chars at a time.
+    pub fn chapter_words(&self, chapter: &crate::text::Chapter) -> Result<Vec<crate::finder::Word>, JpdbError> {
+        const BATCH: usize = 4000;
+        let mut all = Vec::new();
+        let (mut texts, mut starts, mut size) = (Vec::new(), Vec::new(), 0);
+        let mut start = 0;
+        let mut send = |texts: &mut Vec<String>, starts: &mut Vec<usize>| -> Result<(), JpdbError> {
+            for (words, at) in self.parse_words(texts)?.into_iter().zip(starts.iter()) {
+                all.extend(words.into_iter().map(|mut w| {
+                    w.start += at;
+                    w
+                }));
+            }
+            texts.clear();
+            starts.clear();
+            Ok(())
+        };
+        for b in &chapter.blocks {
+            if let Some(t) = b.as_text().filter(|t| !t.text.trim().is_empty()) {
+                texts.push(t.text.clone());
+                starts.push(start);
+                size += t.text.chars().count();
+                if size >= BATCH {
+                    send(&mut texts, &mut starts)?;
+                    size = 0;
+                }
+            }
+            start += b.char_len();
+        }
+        send(&mut texts, &mut starts)?;
+        Ok(all)
+    }
+
     pub fn review(&self, ids: JpdbIds, grade: Review) -> Result<(), JpdbError> {
         self.post("review", json!({ "vid": ids.vid, "sid": ids.sid, "grade": grade.wire() })).map(|_| ())
     }
@@ -205,6 +289,18 @@ fn text_at(row: &[Value], i: usize) -> String {
     row.get(i).and_then(Value::as_str).unwrap_or_default().to_owned()
 }
 
+// Plain strings, or lists of parts should jpdb.io send them split.
+fn meanings(v: Option<&Value>) -> Vec<String> {
+    let Some(Value::Array(list)) = v else { return Vec::new() };
+    list.iter()
+        .filter_map(|m| match m {
+            Value::String(s) => Some(s.clone()),
+            Value::Array(parts) => Some(parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; ")),
+            _ => None,
+        })
+        .collect()
+}
+
 fn plain(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -228,4 +324,33 @@ fn api_error(status: u16, body: &str) -> JpdbError {
         code
     });
     JpdbError::Api(message.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::http::{Mock, Response};
+
+    #[test]
+    fn parsed_words_sit_at_char_offsets_with_their_meanings() {
+        // Hand-written, in the shape jpdb.io documents: tokens per text, then the vocabulary they point to.
+        let mock = Mock::new(|r| {
+            let body: Value = serde_json::from_str(&r.body).unwrap();
+            assert_eq!(body["position_length_encoding"], "utf32");
+            Ok(Response::ok(
+                json!({
+                    "tokens": [[[1, 3, 2], [0, 0, 2]], []],
+                    "vocabulary": [[1467640, "羅生", "らしょう", ["a gate"], ["n"]], [1538750, "下人", "げにん", ["servant", "menial"], ["n"]]],
+                })
+                .to_string(),
+            ))
+        });
+        let client = JpdbClient::with_transport("key", mock);
+        let words = client.parse_words(&["羅生門の下人".into(), "".into()]).unwrap();
+        assert_eq!(words.len(), 2);
+        let w: Vec<(usize, usize, &str)> = words[0].iter().map(|w| (w.start, w.len, w.spelling.as_str())).collect();
+        assert_eq!(w, [(0, 2, "羅生"), (3, 2, "下人")]);
+        assert_eq!(words[0][1].meanings, ["servant", "menial"]);
+        assert_eq!(words[0][1].jmdict_id, Some(1538750));
+    }
 }

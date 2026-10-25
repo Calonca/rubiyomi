@@ -2,10 +2,10 @@
 // Copyright (C) 2026 Alessandro La Conca
 
 use egui::RichText;
-use egui_material_icons::icons::{ICON_AUTO_STORIES, ICON_DESCRIPTION, ICON_DICTIONARY, ICON_GAVEL, ICON_INFO, ICON_SCHOOL};
+use egui_material_icons::icons::{ICON_AUTO_STORIES, ICON_DESCRIPTION, ICON_DICTIONARY, ICON_GAVEL, ICON_INFO, ICON_SCHOOL, ICON_SEGMENT};
 use rubiyomi_core::dict::DictVersion;
 use rubiyomi_core::platform::Platform;
-use rubiyomi_core::settings::{PageSettings, ReviewSource};
+use rubiyomi_core::settings::{PageSettings, Parser, ReviewSource};
 use rubiyomi_core::theme::Scheme;
 
 use super::reviews_form::{ReviewsForm, hint};
@@ -23,6 +23,7 @@ enum Page {
     WordFinder,
     Reviews,
     Reading,
+    Parsing,
 }
 
 // Where the reader was going when the dialog about unsaved changes came up.
@@ -39,6 +40,8 @@ pub struct SettingsScreen {
     leaving: Option<Leave>,
     // A tab to go to once the dialog is answered, for the app to take.
     go_to: Option<usize>,
+    // A jpdb.io key typed on the parsing page, before it is used.
+    parse_key: String,
 }
 
 impl SettingsScreen {
@@ -74,7 +77,7 @@ impl SettingsScreen {
     fn go_back(&mut self) -> bool {
         self.page = match self.page {
             Page::Main => return false,
-            Page::Reviews | Page::Reading => Page::Main,
+            Page::Reviews | Page::Reading | Page::Parsing => Page::Main,
             Page::About => Page::Main,
             Page::Dictionary | Page::WordFinder => Page::About,
         };
@@ -101,6 +104,7 @@ impl SettingsScreen {
             Page::WordFinder => "Word finder",
             Page::Reviews => "Reviews",
             Page::Reading => "Page",
+            Page::Parsing => "Parsing",
         };
         if m3::top_app_bar(ui, s, title, self.page != Page::Main) {
             self.back(reviews);
@@ -114,6 +118,7 @@ impl SettingsScreen {
                 Page::Reviews => self.reviews(ui, s, platform, reviews),
                 Page::Reading => changed = super::page_form::ui(ui, s, page, colours_matter),
                 Page::About => self.about(ui, s, dict.as_ref()),
+                Page::Parsing => self.parsing(ui, s, platform, reviews),
                 Page::Dictionary => dictionary(ui, s, dict.as_ref()),
                 Page::WordFinder => prose(ui, |ui| {
                     words(
@@ -137,6 +142,15 @@ impl SettingsScreen {
         m3::section_header(ui, s, "Words");
         if m3::list_item(ui, s, ICON_DICTIONARY, "Dictionary", "JMdict, English, on this device", true).clicked() {
             self.page = Page::Dictionary;
+        }
+        let parsing = match (reviews.settings.parser, reviews.parser.is_some()) {
+            (Parser::Device, _) => "On this device",
+            (Parser::Jpdb, true) => "jpdb.io",
+            (Parser::Jpdb, false) => "jpdb.io: needs a key, on this device until then",
+        };
+        if m3::list_item(ui, s, ICON_SEGMENT, "Parsing", parsing, true).clicked() {
+            self.parse_key.clear();
+            self.page = Page::Parsing;
         }
         if m3::list_item(ui, s, ICON_SCHOOL, "Reviews", &reviews.summary(), true).clicked() {
             self.form = ReviewsForm::new(&reviews.settings);
@@ -212,6 +226,47 @@ impl SettingsScreen {
             }
             ui.add_space(8.0);
             status(ui, s, reviews, self.form.draft != reviews.settings);
+        });
+    }
+
+    fn parsing(&mut self, ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform, reviews: &mut Reviews) {
+        prose(ui, |ui| {
+            let mut i = (reviews.settings.parser == Parser::Jpdb) as usize;
+            if m3::segmented(ui, s, &["On this device", "jpdb.io"], &mut i) {
+                let mut changed = reviews.settings.clone();
+                changed.parser = if i == 1 { Parser::Jpdb } else { Parser::Device };
+                reviews.apply_parsing(platform, changed);
+            }
+            ui.add_space(16.0);
+            if reviews.settings.parser == Parser::Device {
+                words(
+                    ui,
+                    s,
+                    "The words are found on this device, with lindera and the JMdict dictionary. Nothing leaves it, and it works offline.",
+                );
+                return;
+            }
+            words(
+                ui,
+                s,
+                "jpdb.io finds the words, the way its own reader splits them, with its meanings. Each chapter's text is sent to jpdb.io                  once, when it is first opened, and its words are kept on this device. Offline, the words are found on this device.",
+            );
+            if reviews.parser.is_some() {
+                return;
+            }
+            ui.add_space(16.0);
+            hint(ui, s, "jpdb.io needs your API key, from the settings page of your jpdb.io account.");
+            ui.add_space(8.0);
+            let paste = || platform.clipboard_text();
+            let paste = platform.can_paste().then_some(&paste as &dyn Fn() -> Option<String>);
+            m3::text_field(ui, s, &mut self.parse_key, "API key", true, paste);
+            ui.add_space(8.0);
+            if !self.parse_key.trim().is_empty() && m3::filled_button(ui, s, "Use this key").clicked() {
+                let mut changed = reviews.settings.clone();
+                changed.jpdb_key = self.parse_key.trim().to_owned();
+                reviews.apply_parsing(platform, changed);
+                self.parse_key.clear();
+            }
         });
     }
 

@@ -10,7 +10,7 @@ use rubiyomi_core::grade::{GradeError, Grader};
 use rubiyomi_core::http;
 use rubiyomi_core::jpdb::JpdbClient;
 use rubiyomi_core::platform::Platform;
-use rubiyomi_core::settings::{ReviewSource, Settings};
+use rubiyomi_core::settings::{Parser, ReviewSource, Settings};
 
 use crate::task::{self, Task};
 
@@ -25,6 +25,8 @@ pub enum Status {
 pub struct Reviews {
     pub settings: Settings,
     pub grader: Option<Arc<dyn Grader>>,
+    // Set when jpdb.io finds the words in the text.
+    pub parser: Option<Arc<JpdbClient>>,
     pub status: Status,
     // Bumped whenever the states may have changed, so pages recolour.
     pub generation: u64,
@@ -39,6 +41,7 @@ impl Reviews {
         let mut me = Reviews {
             settings: Settings::load(platform),
             grader: None,
+            parser: None,
             status: Status::Off,
             generation: 0,
             note: None,
@@ -61,7 +64,17 @@ impl Reviews {
         self.start(ctx, platform);
     }
 
+    // How the words are found changes nothing that needs a sync.
+    pub fn apply_parsing(&mut self, platform: &dyn Platform, settings: Settings) {
+        if let Err(e) = settings.save(platform) {
+            log::warn!("saving settings: {e}");
+        }
+        self.settings = settings;
+        self.parser = parser(&self.settings);
+    }
+
     pub fn start(&mut self, ctx: &egui::Context, platform: &dyn Platform) {
+        self.parser = parser(&self.settings);
         self.grader = grader(platform, &self.settings);
         self.generation += 1;
         let Some(grader) = self.grader.clone() else {
@@ -122,6 +135,11 @@ impl Reviews {
 
 pub fn anki_backend(platform: &dyn Platform, settings: &Settings) -> Box<dyn AnkiBackend> {
     platform.anki_droid().unwrap_or_else(|| Box::new(AnkiConnect::new(&settings.anki_url, &settings.anki_key, http::transport())))
+}
+
+fn parser(settings: &Settings) -> Option<Arc<JpdbClient>> {
+    let key = settings.jpdb_key.trim();
+    (settings.parser == Parser::Jpdb && !key.is_empty()).then(|| Arc::new(JpdbClient::new(key)))
 }
 
 fn grader(platform: &dyn Platform, settings: &Settings) -> Option<Arc<dyn Grader>> {
