@@ -19,8 +19,9 @@ use crate::screens::library::LibraryScreen;
 use crate::screens::reader::ReaderScreen;
 use crate::screens::settings::SettingsScreen;
 use crate::screens::setup::Setup;
+use crate::screens::stats::StatsScreen;
 use crate::screens::words::WordsScreen;
-use crate::screens::{self, Ctx};
+use crate::screens::Ctx;
 use crate::task::{self, Task};
 use crate::ui::{fonts, m3};
 
@@ -43,6 +44,7 @@ pub struct App {
     history: History,
     stats: Stats,
     words: WordsScreen,
+    stats_screen: StatsScreen,
     awake: bool,
 }
 
@@ -72,6 +74,7 @@ impl App {
             history: History::load(&dir),
             stats: Stats::load(&dir),
             words: WordsScreen::default(),
+            stats_screen: StatsScreen::default(),
             awake: false,
             platform,
             library,
@@ -244,7 +247,7 @@ impl App {
                     }
                 }
             }
-            2 => screens::stats::ui(ui, &s, &self.stats),
+            2 => self.stats_screen.ui(ui, &s, &self.stats),
             _ => {
                 let colours = self.reviews.grader.is_some();
                 if self.settings.ui(ui, &s, &*self.platform, &mut self.reviews, self.dicts.installed(), &mut self.page, colours)

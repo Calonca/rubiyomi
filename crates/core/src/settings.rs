@@ -158,8 +158,8 @@ impl Default for PageSettings {
             furigana: Furigana::Show,
             colours: WordColours::Text,
             tap_to_turn: false,
-            keep_awake: false,
-            show_percent: false,
+            keep_awake: true,
+            show_percent: true,
         }
     }
 }

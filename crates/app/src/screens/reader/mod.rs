@@ -43,6 +43,18 @@ struct Slide {
     chapter: usize,
     start: f64,
     forward: bool,
+    // How far a swipe had already moved it.
+    from_progress: f32,
+}
+
+// A swipe let go before it turned the page, going back into place.
+struct Snap {
+    start: f64,
+    dx: f32,
+}
+
+fn ease(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
 }
 
 fn family(t: Typeface) -> FontFamily {
@@ -106,6 +118,7 @@ pub struct ReaderScreen {
     pending: Day,
     seconds: f64,
     slide: Option<Slide>,
+    snap: Option<Snap>,
 }
 
 impl ReaderScreen {
@@ -151,6 +164,7 @@ impl ReaderScreen {
             pending: Day::default(),
             seconds: 0.0,
             slide: None,
+            snap: None,
         };
         reader.runs = reader.chapter_runs();
         Ok(reader)
@@ -188,10 +202,8 @@ impl ReaderScreen {
         let library = cx.library;
         let from = self.pages.get(self.page).cloned();
         let chapter = self.index;
-        let read = from
-            .as_ref()
-            .map_or(0, |page| page.glyphs.iter().filter(|g| !g.text.trim().is_empty()).map(|g| g.len.max(1) as u64).sum::<u64>());
-        self.active();
+        let read = from.as_ref().map_or(Day::default(), |page| self.page_read(page));
+        let timed = self.active();
         let moved = match turn {
             Turn::Next if self.page + 1 < self.pages.len() => {
                 self.page += 1;
@@ -220,7 +232,12 @@ impl ReaderScreen {
             _ => false,
         };
         if turn == Turn::Next && moved {
-            self.pending.chars += read;
+            let mut read = read;
+            if timed {
+                read.timed_chars = read.chars;
+            }
+            read.chapters = (self.index != chapter) as u32;
+            self.pending.add(read);
         }
         self.flush(cx);
         if !moved {
@@ -228,21 +245,41 @@ impl ReaderScreen {
         }
         self.popup = None;
         self.mark = None;
-        self.slide = from.map(|from| Slide { from, chapter, start: self.now, forward: turn == Turn::Next });
+        self.slide = from.map(|from| Slide { from, chapter, start: self.now, forward: turn == Turn::Next, from_progress: 0.0 });
         if !self.save_after_layout {
             self.save(library);
         }
     }
 
     // Time counts from one touch of the page to the next, unless it was left alone too long.
-    fn active(&mut self) {
-        if let Some(last) = self.last_active {
+    // Says whether the clock was running since the last touch.
+    fn active(&mut self) -> bool {
+        let timed = self.last_active.is_some_and(|last| {
             let gap = self.now - last;
             if gap > 0.0 && gap < IDLE {
                 self.seconds += gap;
             }
-        }
+            gap < IDLE
+        });
         self.last_active = Some(self.now);
+        timed
+    }
+
+    // What reading a page adds to the stats: its characters, and its words with how many are unknown.
+    fn page_read(&self, page: &Page) -> Day {
+        let chars = page.glyphs.iter().filter(|g| !g.text.trim().is_empty()).map(|g| g.len.max(1) as u64).sum::<u64>();
+        let mut day = Day { chars, ..Day::default() };
+        if let Some(c) = self.colours.as_ref().filter(|c| c.index == self.index)
+            && let (Some(lo), Some(hi)) = (page.glyphs.first().map(|g| g.offset), page.glyphs.last().map(|g| g.offset))
+        {
+            for w in c.words[c.words.partition_point(|w| w.start < lo)..].iter().take_while(|w| w.start <= hi) {
+                day.words += 1;
+                if !c.states.get(&w.key()).is_some_and(|s| s.is_known()) {
+                    day.unknown += 1;
+                }
+            }
+        }
+        day
     }
 
     fn flush(&mut self, cx: &mut Ctx<'_>) {
@@ -456,30 +493,44 @@ impl ReaderScreen {
         let rest = area.min + vec2(p.margin, p.margin);
         let thickness = (p.font_size * 0.055).max(1.0);
         let mut origin = rest;
+        let width = area.width();
         if let Some(slide) = &self.slide {
-            let t = ((self.now - slide.start) / SLIDE).clamp(0.0, 1.0) as f32;
-            let eased = 1.0 - (1.0 - t).powi(3);
+            let from = slide.from_progress;
+            let t = ((self.now - slide.start) / (SLIDE * (1.0 - from as f64)).max(0.02)).clamp(0.0, 1.0) as f32;
+            let progress = from + (1.0 - from) * ease(t);
             // Columns are read right to left, so a vertical book turns the other way.
             let dir = if slide.forward != p.vertical { -1.0 } else { 1.0 };
-            let width = area.width();
-            origin = rest + vec2(-dir * (1.0 - eased) * width, 0.0);
-            let old = rest + vec2(dir * eased * width, 0.0);
-            let options = PaintOptions { family: family(p.typeface), text: c(s.on_surface), ruby: m3::alpha(c(s.on_surface), 0.8) };
-            if slide.chapter == self.index {
-                for img in &slide.from.images {
-                    if let Some(Block::Image(i)) = self.chapter.blocks.get(img.block)
-                        && let Some(t) = self.images.get(&i.file)
-                    {
-                        egui::Image::new(t).paint_at(ui, to_screen(old, &img.rect));
-                    }
-                }
-            }
-            let faint = |block: usize, run: usize| p.furigana == Furigana::Blur && !self.revealed.contains(&(block, run));
-            paint_page(ui.painter(), old, &slide.from, &options, |_| None, faint);
+            origin = rest + vec2(-dir * (1.0 - progress) * width, 0.0);
+            let old = rest + vec2(dir * progress * width, 0.0);
+            self.paint_plain(ui, s, &p, &slide.from, slide.chapter, old);
             if t >= 1.0 {
                 self.slide = None;
             } else {
                 ctx.request_repaint();
+            }
+        } else {
+            // The page follows the finger, with the one beside it coming in.
+            let dx = if let Some(snap) = &self.snap {
+                let t = ((self.now - snap.start) / SLIDE).clamp(0.0, 1.0) as f32;
+                let dx = snap.dx * (1.0 - ease(t));
+                if t >= 1.0 {
+                    self.snap = None;
+                } else {
+                    ctx.request_repaint();
+                }
+                dx
+            } else if response.dragged() && self.drag.x.abs() > self.drag.y.abs() {
+                (self.drag.x + response.drag_delta().x).clamp(-width, width)
+            } else {
+                0.0
+            };
+            if dx != 0.0 {
+                origin = rest + vec2(dx, 0.0);
+                let beside = if (dx < 0.0) != p.vertical { self.page.checked_add(1) } else { self.page.checked_sub(1) };
+                if let Some(page) = beside.and_then(|i| self.pages.get(i)).cloned() {
+                    let at = rest + vec2(dx + if dx < 0.0 { width } else { -width }, 0.0);
+                    self.paint_plain(ui, s, &p, &page, self.index, at);
+                }
             }
         }
         if let Some(page) = self.pages.get(self.page).cloned() {
@@ -560,9 +611,17 @@ impl ReaderScreen {
         }
         if response.drag_stopped() {
             let total = std::mem::take(&mut self.drag);
-            if total.x.abs() > 48.0 && total.x.abs() > total.y.abs() {
-                let forward = if p.vertical { total.x > 0.0 } else { total.x < 0.0 };
+            let sideways = total.x.abs() > total.y.abs();
+            let dx = total.x.clamp(-width, width);
+            if sideways && dx.abs() > 48.0 {
+                let forward = if p.vertical { dx > 0.0 } else { dx < 0.0 };
                 self.turn(cx, if forward { Turn::Next } else { Turn::Previous });
+                match &mut self.slide {
+                    Some(slide) if slide.start == self.now => slide.from_progress = (dx.abs() / width).min(0.95),
+                    _ => self.snap = Some(Snap { start: self.now, dx }),
+                }
+            } else if sideways && dx != 0.0 {
+                self.snap = Some(Snap { start: self.now, dx });
             }
         } else if response.clicked()
             && let Some(p) = response.interact_pointer_pos()
@@ -584,6 +643,22 @@ impl ReaderScreen {
                 self.turn(cx, if forward { Turn::Next } else { Turn::Previous });
             }
         }
+    }
+
+    // A page without its colours or marks, while it moves.
+    fn paint_plain(&self, ui: &egui::Ui, s: &Scheme, p: &PageSettings, page: &Page, chapter: usize, origin: egui::Pos2) {
+        if chapter == self.index {
+            for img in &page.images {
+                if let Some(Block::Image(i)) = self.chapter.blocks.get(img.block)
+                    && let Some(t) = self.images.get(&i.file)
+                {
+                    egui::Image::new(t).paint_at(ui, to_screen(origin, &img.rect));
+                }
+            }
+        }
+        let options = PaintOptions { family: family(p.typeface), text: c(s.on_surface), ruby: m3::alpha(c(s.on_surface), 0.8) };
+        let faint = |block: usize, run: usize| p.furigana == Furigana::Blur && !self.revealed.contains(&(block, run));
+        paint_page(ui.painter(), origin, page, &options, |_| None, faint);
     }
 
     fn glyph_at(&self, at: egui::Vec2) -> Option<usize> {

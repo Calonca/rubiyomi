@@ -36,6 +36,11 @@ impl CardState {
         CardState::Unknown,
     ];
 
+    // Counted as known in the reading stats.
+    pub fn is_known(self) -> bool {
+        matches!(self, CardState::Known | CardState::NeverForget | CardState::Blacklisted | CardState::Redundant)
+    }
+
     pub fn wire(self) -> &'static str {
         match self {
             CardState::NotInDeck => "not-in-deck",
