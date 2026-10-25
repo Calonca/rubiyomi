@@ -734,10 +734,11 @@ impl ReaderScreen {
             let third = area.width() / 3.0;
             let edge = (p.x < area.left() + third) || (p.x > area.right() - third);
             self.active();
-            // A word tapped with the card open takes the card over; anywhere else closes it.
-            if !self.bar
-                && let Some(offset) = self.glyph_at(p - rest)
-            {
+            // Another word tapped with the card open takes the card over; the same word,
+            // or anywhere else, closes it.
+            let tapped = if self.bar { None } else { self.glyph_at(p - rest) };
+            let same = tapped.is_some_and(|o| self.popup.as_ref().is_some_and(|c| c.span.contains(&o)));
+            if let Some(offset) = tapped.filter(|_| !same) {
                 self.look_up(cx, rest, offset);
             } else if self.popup.is_some() {
                 self.popup = None;
