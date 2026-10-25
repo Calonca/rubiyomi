@@ -273,3 +273,67 @@ const SUSPEND: &str = "Suspend";
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
+
+// A note type as one deck uses it: how many of the deck's notes are of it, its
+// fields, and what one of those notes holds in each, for the setup to show.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InDeck {
+    pub note_type: String,
+    pub notes: usize,
+    pub fields: Vec<String>,
+    pub sample: Vec<String>,
+}
+
+// The note types `deck` holds notes of, most used first.
+pub fn inspect(backend: &dyn AnkiBackend, deck: &str, note_types: &[String]) -> Result<Vec<InDeck>, GradeError> {
+    let mut found = Vec::new();
+    for t in note_types {
+        let search = AnkiMapping { deck: deck.to_owned(), note_type: t.clone(), ..AnkiMapping::default() }.search();
+        let ids = backend.find_notes(&search)?;
+        let Some(&first) = ids.first() else { continue };
+        let fields = backend.fields(t)?;
+        let sample =
+            backend.notes(&[first])?.into_iter().next().map(|n| n.fields.iter().map(|f| fields::plain(f)).collect()).unwrap_or_default();
+        found.push(InDeck { note_type: t.clone(), notes: ids.len(), fields, sample });
+    }
+    found.sort_by_key(|t| std::cmp::Reverse(t.notes));
+    Ok(found)
+}
+
+// Which field takes the word, reading, meaning and sentence, guessed from their names.
+pub fn guess_roles(fields: &[String]) -> [String; 4] {
+    let hints: [&[&str]; 4] = [
+        &["word", "expression", "vocab", "term", "kanji", "単語", "語彙", "front"],
+        &["reading", "kana", "furigana", "読み", "yomi"],
+        &["meaning", "definition", "gloss", "english", "意味", "back"],
+        &["sentence", "example", "context", "例文", "文"],
+    ];
+    let mut roles: [String; 4] = Default::default();
+    for (role, words) in hints.iter().enumerate() {
+        let free = |f: &&String| !roles.contains(f);
+        let pick = words.iter().find_map(|w| fields.iter().filter(free).find(|f| f.to_lowercase().contains(w))).cloned();
+        if let Some(f) = pick {
+            roles[role] = f;
+        }
+    }
+    if roles[0].is_empty()
+        && let Some(f) = fields.iter().find(|f| !roles.contains(f))
+    {
+        roles[0] = f.clone();
+    }
+    roles
+}
+
+#[cfg(test)]
+mod guess_tests {
+    use super::guess_roles;
+
+    #[test]
+    fn roles_follow_the_field_names_and_never_share_a_field() {
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(guess_roles(&names(&["Front", "Back"])), ["Front", "", "Back", ""].map(String::from));
+        let jpdb = names(&["Expression", "Reading", "Meaning", "Sentence"]);
+        assert_eq!(guess_roles(&jpdb), ["Expression", "Reading", "Meaning", "Sentence"].map(String::from));
+        assert_eq!(guess_roles(&names(&["Notes", "Extra"]))[0], "Notes", "something holds the word");
+    }
+}
