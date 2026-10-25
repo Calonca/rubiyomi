@@ -49,6 +49,8 @@ pub struct Popup {
     // Unknown until the card has been laid out once; until then it is drawn invisibly.
     size: Option<Vec2>,
     shown_at: Option<f64>,
+    // Where the card is drawn, which follows where it belongs rather than jumping there.
+    at: Option<Pos2>,
 }
 
 fn width_for(screen: f32) -> f32 {
@@ -105,6 +107,7 @@ impl Popup {
             options: false,
             size: None,
             shown_at: None,
+            at: None,
         }
     }
 
@@ -112,7 +115,24 @@ impl Popup {
         let screen = ctx.content_rect();
         let width = width_for(screen.width()).min(screen.width());
         let card = self.size.unwrap_or(vec2(width, 0.0));
-        let at = if self.vertical { place_beside(screen, card, self.anchor) } else { place(screen, card, self.anchor) };
+        let target = if self.vertical { place_beside(screen, card, self.anchor) } else { place(screen, card, self.anchor) };
+        // Each frame the card closes a share of the distance left, so a size change that
+        // moves it (the other face, a message) glides, and a place that keeps changing
+        // bends the path rather than starting a new one.
+        let at = match self.at.filter(|_| self.shown_at.is_some()) {
+            None => target,
+            Some(at) => {
+                let dt = ctx.input(|i| i.stable_dt).min(0.1);
+                let next = at + (target - at) * (1.0 - (-dt / 0.06).exp());
+                if (target - next).length() >= 0.5 {
+                    ctx.request_repaint();
+                    next
+                } else {
+                    target
+                }
+            }
+        };
+        self.at = Some(at);
         let now = ctx.input(|i| i.time);
         let opacity = match (self.size, self.shown_at) {
             (None, _) => 0.0,
