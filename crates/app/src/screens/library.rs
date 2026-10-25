@@ -84,7 +84,7 @@ impl LibraryScreen {
         let cell_w = (width - 16.0 * (columns as f32 - 1.0)) / columns as f32;
         let cover_h = cell_w * 1.5;
         let cell_h = cover_h + 8.0 + 8.0 + 2.0 * 20.0 + 18.0;
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        m3::scroll().auto_shrink(false).show(ui, |ui| {
             ui.add_space(8.0);
             let rows = self.books.len().div_ceil(columns);
             let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), rows as f32 * (cell_h + 16.0) + 88.0), Sense::hover());

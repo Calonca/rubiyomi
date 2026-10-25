@@ -109,7 +109,7 @@ impl SettingsScreen {
             self.leave_dialog(ui.ctx(), s, platform, reviews);
         }
         egui::CentralPanel::default().frame(super::surface(s)).show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| match self.page {
+            m3::scroll().show(ui, |ui| match self.page {
                 Page::Main => self.main(ui, s, reviews),
                 Page::Reviews => self.reviews(ui, s, platform, reviews),
                 Page::Reading => changed = super::page_form::ui(ui, s, page, colours_matter),

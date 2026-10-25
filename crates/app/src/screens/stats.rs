@@ -180,7 +180,7 @@ impl StatsScreen {
                 egui::scroll_area::ScrollSource::default()
             };
             let mut holding = false;
-            egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_source(source).show(ui, |ui| {
+            m3::scroll().auto_shrink([false, false]).scroll_source(source).show(ui, |ui| {
                 egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 8, bottom: 32 }).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     let all = [Granularity::Day, Granularity::Week, Granularity::Month];

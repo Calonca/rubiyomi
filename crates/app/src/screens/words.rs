@@ -72,7 +72,7 @@ impl WordsScreen {
                 });
             });
             let mut remove = None;
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            m3::scroll().auto_shrink([false, false]).show(ui, |ui| {
                 for l in found.iter().take(SHOWN) {
                     let key = l.key();
                     let open = self.open.as_ref() == Some(&key);

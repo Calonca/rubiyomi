@@ -72,21 +72,6 @@ pub fn apply(ctx: &egui::Context, s: &Scheme) {
         style.spacing.item_spacing = vec2(8.0, 8.0);
         style.spacing.interact_size.y = 40.0;
         style.spacing.slider_rail_height = 4.0;
-        // A phone scrolls by swiping, as its apps show no scroll bars.
-        if cfg!(target_os = "android") {
-            let scroll = &mut style.spacing.scroll;
-            scroll.floating = true;
-            scroll.floating_allocated_width = 0.0;
-            // Nor can an invisible bar at the edge be caught by a swipe.
-            scroll.bar_width = 0.0;
-            scroll.floating_width = 0.0;
-            scroll.dormant_background_opacity = 0.0;
-            scroll.active_background_opacity = 0.0;
-            scroll.interact_background_opacity = 0.0;
-            scroll.dormant_handle_opacity = 0.0;
-            scroll.active_handle_opacity = 0.0;
-            scroll.interact_handle_opacity = 0.0;
-        }
         style.text_styles = [
             (TextStyle::Small, font(text::BODY_SMALL)),
             (TextStyle::Body, font(text::BODY_MEDIUM)),
@@ -496,4 +481,10 @@ pub fn progress(p: &egui::Painter, s: &Scheme, rect: Rect, fraction: f32) {
     if f > 0.0 {
         p.rect_filled(Rect::from_min_max(rect.min, pos2(split.max(rect.left() + rect.height()), rect.bottom())), radius, c(s.primary));
     }
+}
+
+// A vertical scroll area. A phone scrolls by swiping, as its apps do, with no bar to see or catch.
+pub fn scroll() -> egui::ScrollArea {
+    let area = egui::ScrollArea::vertical();
+    if cfg!(target_os = "android") { area.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden) } else { area }
 }

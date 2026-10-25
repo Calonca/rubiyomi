@@ -196,7 +196,7 @@ impl Popup {
         }
         ui.add_space(6.0);
         let mut action = None;
-        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+        m3::scroll().auto_shrink([false, true]).show(ui, |ui| {
             ui.set_width(ui.available_width() - 6.0);
             if self.options {
                 action = self.options_face(ui, s, grader, &word, dark);

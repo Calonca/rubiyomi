@@ -576,7 +576,7 @@ impl ReaderScreen {
                 ui.add_space(16.0);
                 ui.label(egui::RichText::new("Page").font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
             });
-            egui::ScrollArea::vertical().max_height(screen.height() * 0.75).show(ui, |ui| {
+            m3::scroll().max_height(screen.height() * 0.75).show(ui, |ui| {
                 if super::page_form::ui(ui, s, cx.page, cx.grader.is_some())
                     && let Err(e) = cx.page.save(&cx.platform.data_dir())
                 {
@@ -1083,7 +1083,7 @@ impl ReaderScreen {
             // A fixed height: left to itself the list measured one row on the first frame and kept it.
             let rows = self.meta.chapters.len() as f32 * (56.0 + ui.spacing().item_spacing.y);
             let height = rows.min(screen.height() * 0.7);
-            egui::ScrollArea::vertical().auto_shrink([false, false]).min_scrolled_height(height).max_height(height).show(ui, |ui| {
+            m3::scroll().auto_shrink([false, false]).min_scrolled_height(height).max_height(height).show(ui, |ui| {
                 for (i, ch) in self.meta.chapters.iter().enumerate() {
                     let title = if ch.title.trim().is_empty() { format!("Chapter {}", i + 1) } else { ch.title.clone() };
                     let percent = (self.meta.fraction_at(i, 0) * 100.0).floor();

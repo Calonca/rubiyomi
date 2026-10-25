@@ -32,7 +32,7 @@ impl Setup {
             bottom: inset.bottom + 16,
         });
         egui::CentralPanel::default().frame(frame).show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            m3::scroll().show(ui, |ui| {
                 ui.set_width((ui.available_width() - 12.0).min(560.0));
                 match self.step {
                     0 => self.welcome(ui, s),
