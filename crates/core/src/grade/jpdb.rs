@@ -40,15 +40,16 @@ impl From<JpdbError> for GradeError {
 pub struct JpdbGrader {
     client: JpdbClient,
     deck: String,
+    deck_name: String,
     synced: Mutex<HashMap<u64, Vec<Vocabulary>>>,
     path: PathBuf,
 }
 
 impl JpdbGrader {
-    pub fn new(client: JpdbClient, deck: &str, data_dir: &Path) -> Self {
+    pub fn new(client: JpdbClient, deck: &str, deck_name: &str, data_dir: &Path) -> Self {
         let path = data_dir.join("jpdb-decks.json");
         let synced = read_json_or_default(&path);
-        JpdbGrader { client, deck: deck.to_owned(), synced: Mutex::new(synced), path }
+        JpdbGrader { client, deck: deck.to_owned(), deck_name: deck_name.to_owned(), synced: Mutex::new(synced), path }
     }
 
     fn save(&self, map: &HashMap<u64, Vec<Vocabulary>>) {
@@ -110,6 +111,10 @@ impl Grader for JpdbGrader {
 
     fn actions(&self) -> &'static [&'static str] {
         &[NEVER_FORGET, BLACKLIST]
+    }
+
+    fn deck_name(&self) -> Option<String> {
+        (!self.deck.trim().is_empty()).then(|| if self.deck_name.is_empty() { self.deck.clone() } else { self.deck_name.clone() })
     }
 
     fn sync(&self, progress: &dyn Fn(usize, usize)) -> Result<(), GradeError> {
@@ -235,7 +240,7 @@ mod tests {
     #[test]
     fn grades_and_adds_send_jpdb_ids_and_stick() {
         let mock = server();
-        let grader = JpdbGrader::new(JpdbClient::with_transport("k", mock.clone()), "5", &tempdir("jpdb-grade"));
+        let grader = JpdbGrader::new(JpdbClient::with_transport("k", mock.clone()), "5", "Mine", &tempdir("jpdb-grade"));
         grader.sync(&|_, _| {}).unwrap();
         assert!(mock.requests().iter().all(|r| !r.url.ends_with("lookup-vocabulary")), "a sync reads the decks only");
         let cat = word("猫", "ねこ", 100);
@@ -258,7 +263,7 @@ mod tests {
     #[test]
     fn no_key_no_call() {
         let mock = server();
-        let grader = JpdbGrader::new(JpdbClient::with_transport(" ", mock.clone()), "5", &tempdir("jpdb-nokey"));
+        let grader = JpdbGrader::new(JpdbClient::with_transport(" ", mock.clone()), "5", "Mine", &tempdir("jpdb-nokey"));
         assert_eq!(grader.sync(&|_, _| {}), Err(GradeError::Auth));
         assert!(mock.requests().is_empty());
     }

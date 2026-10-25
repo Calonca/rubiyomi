@@ -121,9 +121,12 @@ fn grader(platform: &dyn Platform, settings: &Settings) -> Option<Arc<dyn Grader
     match settings.reviews {
         ReviewSource::None => None,
         ReviewSource::Jpdb if settings.jpdb_key.trim().is_empty() => None,
-        ReviewSource::Jpdb => {
-            Some(Arc::new(JpdbGrader::new(JpdbClient::new(&settings.jpdb_key), &settings.jpdb_deck, &platform.data_dir())))
-        }
+        ReviewSource::Jpdb => Some(Arc::new(JpdbGrader::new(
+            JpdbClient::new(&settings.jpdb_key),
+            &settings.jpdb_deck,
+            &settings.jpdb_deck_name,
+            &platform.data_dir(),
+        ))),
         ReviewSource::Anki => Some(Arc::new(AnkiGrader::new(anki_backend(platform, settings), settings.anki.clone()))),
     }
 }

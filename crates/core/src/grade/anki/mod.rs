@@ -116,6 +116,10 @@ impl Grader for AnkiGrader {
         &GRADES
     }
 
+    fn deck_name(&self) -> Option<String> {
+        (!self.mapping.deck.is_empty()).then(|| self.mapping.deck.clone())
+    }
+
     fn sync(&self, progress: &dyn Fn(usize, usize)) -> Result<(), GradeError> {
         self.check()?;
         progress(0, 1);

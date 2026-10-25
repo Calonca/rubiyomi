@@ -45,6 +45,9 @@ pub trait Grader: Send + Sync {
 
     fn grades(&self) -> &'static [GradeButton];
 
+    // The deck new words go into, by name, once one is chosen.
+    fn deck_name(&self) -> Option<String>;
+
     fn actions(&self) -> &'static [&'static str] {
         &[]
     }

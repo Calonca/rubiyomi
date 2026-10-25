@@ -343,18 +343,18 @@ impl ReaderScreen {
                     }
                 }
                 for line in lines {
-                    ui.painter().rect_filled(line.expand2(vec2(2.0, 1.0)), 4.0, m3::alpha(c(s.primary), 0.25));
+                    ui.painter().rect_filled(line.expand(1.0), 0.0, m3::alpha(c(s.primary), 0.22));
                 }
             }
             let options =
-                PaintOptions { family: FontFamily::Name(BOOK_SERIF.into()), text: c(s.on_surface), ruby: c(s.on_surface_variant) };
+                PaintOptions { family: FontFamily::Name(BOOK_SERIF.into()), text: c(s.on_surface), ruby: m3::alpha(c(s.on_surface), 0.8) };
             let dark = ctx.theme() == egui::Theme::Dark;
             let colours = self.colours.as_ref().filter(|c| c.index == self.index);
             let ink = |offset: usize| {
                 let c = colours?;
                 let w = &c.words[c.words.partition_point(|w| w.start <= offset).checked_sub(1)?];
                 (offset < w.start + w.len).then_some(())?;
-                state_colour(*c.states.get(&w.key())?, dark)
+                Some(state_colour(*c.states.get(&w.key())?, dark)).filter(|c| *c != egui::Color32::TRANSPARENT)
             };
             paint_page(ui.painter(), origin, &page, &options, ink);
         }
@@ -499,8 +499,10 @@ impl ReaderScreen {
     fn review(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>, action: Action) {
         match &action {
             Action::Open(url) => {
-                if !cx.platform.open_url(url) {
-                    cx.snackbar.show(ctx, "Couldn't open the link");
+                if !cx.platform.open_url(url)
+                    && let Some(p) = &mut self.popup
+                {
+                    p.message = Some("No browser could be opened.".into());
                 }
                 return;
             }
@@ -508,7 +510,9 @@ impl ReaderScreen {
                 if !cx.platform.copy_text(text) {
                     ctx.copy_text(text.clone());
                 }
-                cx.snackbar.show(ctx, "Copied");
+                if let Some(p) = &mut self.popup {
+                    p.message = Some("Copied.".into());
+                }
                 return;
             }
             _ => {}
@@ -534,30 +538,30 @@ impl ReaderScreen {
     fn poll_grading(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>) {
         let Some((word, action, result)) = task::take(&mut self.grading) else { return };
         let key = word.key();
-        let mut popup = self.popup.as_mut().filter(|p| matches!(&p.content, Content::Word(w) if w.key() == key));
-        if let Some(p) = popup.as_mut() {
-            p.busy = false;
-        }
-        match result {
+        let said = match result {
             Ok(state) => {
                 if let Some(c) = &mut self.colours {
-                    c.states.insert(key, state);
+                    c.states.insert(key.clone(), state);
                 }
-                if let Some(p) = popup {
+                if let Some(p) = self.popup.as_mut().filter(|p| matches!(&p.content, Content::Word(w) if w.key() == key)) {
                     p.state = Some(state);
                 }
-                let done = match action {
-                    Action::Grade(_) => format!("Graded {} · {}", word.spelling, state.label()),
-                    Action::Add => format!("Added {} · {}", word.spelling, state.label()),
-                    Action::Act(what) => format!("{} · {what}", word.spelling),
+                let grade = |v: u8| cx.grader.and_then(|g| g.grades().iter().find(|b| b.value == v)).map_or("", |b| b.label);
+                match action {
+                    Action::Grade(v) => format!("Graded {}.", grade(v).to_lowercase()),
+                    Action::Add => format!("Added to {}.", cx.grader.and_then(|g| g.deck_name()).unwrap_or_default()),
+                    Action::Act(what) => format!("{what}: done."),
                     Action::Open(_) | Action::Copy(_) => String::new(),
-                };
-                cx.snackbar.show(ctx, done);
+                }
             }
-            Err(e) => {
-                let name = cx.grader.map_or("Reviews", |g| g.name());
-                cx.snackbar.show(ctx, format!("{name}: {e}"));
+            Err(e) => format!("{}: {e}", cx.grader.map_or("Reviews", |g| g.name())),
+        };
+        match self.popup.as_mut().filter(|p| matches!(&p.content, Content::Word(w) if w.key() == key)) {
+            Some(p) => {
+                p.busy = false;
+                p.message = Some(said);
             }
+            None => cx.snackbar.show(ctx, said),
         }
     }
 

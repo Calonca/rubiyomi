@@ -3,13 +3,23 @@
 
 use std::ops::Range;
 
-use egui::{Color32, CornerRadius, RichText, vec2};
+use egui::{Align, Color32, CornerRadius, Layout, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
+use egui_material_icons::MaterialIcon;
+use egui_material_icons::icons::{
+    ICON_ADD, ICON_ALL_INCLUSIVE, ICON_BLOCK, ICON_CLOSE, ICON_CONTENT_COPY, ICON_MORE_HORIZ, ICON_OPEN_IN_NEW,
+};
 use rubiyomi_core::cards::CardState;
 use rubiyomi_core::finder::Word;
 use rubiyomi_core::grade::Grader;
 use rubiyomi_core::theme::Scheme;
 
-use crate::ui::m3::{self, c, font, text};
+use crate::ui::m3::{self, c};
+
+// Below this width the card spans the screen: narrower, it looks like a tooltip.
+const STRETCH_BELOW: f32 = 480.0;
+const MAX_WIDTH: f32 = 300.0;
+const MAX_HEIGHT_FRACTION: f32 = 0.4;
+const GAP: f32 = 8.0;
 
 pub enum Content {
     Word(Word),
@@ -26,161 +36,307 @@ pub enum Action {
 }
 
 pub struct Popup {
-    pub anchor: egui::Rect,
+    pub anchor: Rect,
     pub span: Range<usize>,
     pub content: Content,
     pub sentence: String,
     pub state: Option<CardState>,
     pub busy: bool,
-    height: f32,
+    pub message: Option<String>,
+    // The card's other face: what can be done with the word.
+    options: bool,
+    at: Option<Pos2>,
+    size: Vec2,
+}
+
+fn width_for(screen: f32) -> f32 {
+    if screen < STRETCH_BELOW { screen - GAP * 2.0 } else { MAX_WIDTH }
+}
+
+// Over what hasn't been read yet: under the line, from the word on, or above it
+// when there is no room.
+fn place(screen: Rect, card: Vec2, anchor: Rect) -> Pos2 {
+    let x = anchor.left().clamp(screen.left() + GAP, (screen.right() - card.x - GAP).max(screen.left() + GAP));
+    let mut y = anchor.bottom() + GAP;
+    if y + card.y > screen.bottom() - GAP {
+        y = anchor.top() - GAP - card.y;
+    }
+    pos2(x, y.clamp(screen.top() + GAP, (screen.bottom() - card.y - GAP).max(screen.top() + GAP)))
+}
+
+// Whatever the grade, its button takes the colour of the state it leads to.
+fn grade_state(value: u8, count: usize) -> CardState {
+    let order: &[CardState] = if count >= 5 {
+        &[CardState::Failed, CardState::Due, CardState::Learning, CardState::Known, CardState::New]
+    } else {
+        &[CardState::Failed, CardState::Learning, CardState::Known, CardState::New]
+    };
+    order[(value.max(1) as usize - 1).min(order.len() - 1)]
+}
+
+// Only a word in a deck has a card to grade.
+fn has_card(state: Option<CardState>) -> bool {
+    !matches!(state, None | Some(CardState::NotInDeck | CardState::Locked | CardState::Blacklisted | CardState::Unknown))
 }
 
 impl Popup {
-    pub fn new(anchor: egui::Rect, span: Range<usize>, content: Content) -> Self {
-        Popup { anchor, span, content, sentence: String::new(), state: None, busy: false, height: 200.0 }
-    }
-
-    fn place(&self, screen: egui::Rect, width: f32) -> egui::Pos2 {
-        let gap = 8.0;
-        let below = self.anchor.bottom() + gap;
-        let y = if below + self.height <= screen.bottom() - 8.0 {
-            below
-        } else {
-            (self.anchor.top() - gap - self.height).max(screen.top() + 8.0)
-        };
-        let x = (self.anchor.center().x - width / 2.0).clamp(screen.left() + 8.0, (screen.right() - width - 8.0).max(screen.left() + 8.0));
-        egui::pos2(x, y)
+    pub fn new(anchor: Rect, span: Range<usize>, content: Content) -> Self {
+        Popup {
+            anchor,
+            span,
+            content,
+            sentence: String::new(),
+            state: None,
+            busy: false,
+            message: None,
+            options: false,
+            at: None,
+            size: vec2(MAX_WIDTH, 120.0),
+        }
     }
 
     pub fn ui(&mut self, ctx: &egui::Context, s: &Scheme, grader: Option<&dyn Grader>) -> Option<Action> {
-        let mut action = None;
         let screen = ctx.content_rect();
-        let width = if screen.width() < 480.0 { screen.width() - 16.0 } else { 360.0 };
-        let pos = self.place(screen, width);
+        let width = width_for(screen.width()).min(screen.width());
+        let target = place(screen, self.size, self.anchor);
+        // Each frame the card closes a share of the way left, so it glides to a new word.
+        let at = match self.at {
+            Some(at) => {
+                let share = 1.0 - (-ctx.input(|i| i.stable_dt).min(0.1) / 0.06).exp();
+                let next = at + (target - at) * share;
+                if (target - next).length() >= 0.5 {
+                    ctx.request_repaint();
+                    next
+                } else {
+                    target
+                }
+            }
+            None => target,
+        };
+        self.at = Some(at);
         let dark = ctx.theme() == egui::Theme::Dark;
-        let area = egui::Area::new(egui::Id::new("word-popup")).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
+        let mut action = None;
+        let response = egui::Area::new(egui::Id::new("word-popup")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
             egui::Frame::new()
                 .fill(c(s.surface_container_high))
-                .corner_radius(CornerRadius::same(16))
-                .shadow(egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: m3::alpha(c(s.scrim), 0.25) })
-                .inner_margin(16)
+                .corner_radius(CornerRadius::same(12))
+                .shadow(egui::Shadow { offset: [0, 3], blur: 10, spread: 3, color: Color32::from_black_alpha(170) })
+                .inner_margin(egui::Margin { left: 14, right: 8, top: 8, bottom: 8 })
                 .show(ui, |ui| {
-                    ui.set_width(width - 32.0);
-                    match &self.content {
-                        Content::Message(m) => {
-                            ui.label(RichText::new(m).color(c(s.on_surface_variant)));
-                        }
-                        Content::Word(word) => {
-                            action = word_face(ui, s, word, self.state.filter(|_| grader.is_some()), dark, &self.sentence);
-                            if let Some(g) = grader.filter(|_| word.jmdict_id.is_some())
-                                && let Some(a) = self.footer(ui, s, g)
-                            {
-                                action = Some(a);
-                            }
-                        }
-                    }
+                    ui.set_width(width - 22.0);
+                    ui.set_max_height(screen.height() * MAX_HEIGHT_FRACTION - 16.0);
+                    action = self.body(ui, s, grader, dark);
                 });
         });
-        self.height = area.response.rect.height();
+        let rect = response.response.rect;
+        if (rect.size() - self.size).length() > 0.5 {
+            self.size = rect.size();
+            ctx.request_repaint();
+        }
         action
     }
 
-    fn footer(&self, ui: &mut egui::Ui, s: &Scheme, g: &dyn Grader) -> Option<Action> {
-        let mut action = None;
-        ui.separator();
-        if self.busy {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Sending…");
+    fn body(&mut self, ui: &mut egui::Ui, s: &Scheme, grader: Option<&dyn Grader>, dark: bool) -> Option<Action> {
+        let word = match &self.content {
+            Content::Message(m) => {
+                ui.label(RichText::new(m).size(13.0).color(c(s.on_surface_variant)));
+                return None;
+            }
+            Content::Word(w) => w.clone(),
+        };
+        ui.horizontal(|ui| {
+            let w = ui.available_width() - 32.0;
+            ui.allocate_ui_with_layout(vec2(w, 0.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_width(w);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                if !word.reading.is_empty() && word.reading != word.spelling {
+                    ui.add(egui::Label::new(RichText::new(&word.reading).size(13.0).color(c(s.on_surface_variant))).selectable(true));
+                }
+                ui.add(egui::Label::new(RichText::new(&word.spelling).size(30.0).color(c(s.on_surface))).selectable(true));
             });
-            return None;
-        }
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-            for b in g.grades() {
-                if m3::tonal_button(ui, s, b.label).clicked() {
-                    action = Some(Action::Grade(b.value));
-                }
+            let icon = if self.options { ICON_CLOSE } else { ICON_MORE_HORIZ };
+            if small_icon_button(ui, s, icon).on_hover_text(if self.options { "Back" } else { "Options" }).clicked() {
+                self.options = !self.options;
             }
         });
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-            if m3::filled_button(ui, s, "Add to deck").clicked() {
-                action = Some(Action::Add);
-            }
-            for a in g.actions() {
-                if m3::text_button(ui, s, a).clicked() {
-                    action = Some(Action::Act(a));
+        let state = self.state.filter(|_| grader.is_some());
+        let kinds = pos_labels(&word.pos);
+        if !self.options && (state.is_some() || !kinds.is_empty()) {
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                if let Some(st) = state {
+                    state_chip(ui, st, state_colour(st, dark));
                 }
+                for k in &kinds {
+                    pill(ui, s, k);
+                }
+            });
+        }
+        if self.busy {
+            ui.add_space(6.0);
+            progress_bar(ui, s);
+            ui.add_space(6.0);
+        }
+        if let Some(m) = &self.message {
+            ui.add_space(6.0);
+            ui.label(RichText::new(m).size(12.0).color(c(s.on_surface_variant)));
+        }
+        ui.add_space(6.0);
+        let mut action = None;
+        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+            ui.set_width(ui.available_width() - 6.0);
+            if self.options {
+                action = self.options_face(ui, s, grader, &word, dark);
+            } else {
+                meanings(ui, s, &word);
             }
         });
         action
     }
-}
 
-// Known words keep the text colour: only what still needs work stands out.
-pub fn state_colour(state: CardState, dark: bool) -> Option<Color32> {
-    let (light, night) = match state {
-        CardState::NotInDeck => (0x2563C9, 0x82B1FF),
-        CardState::New => (0x00838F, 0x5FD4DD),
-        CardState::Learning => (0x2E7D32, 0x81D486),
-        CardState::Due => (0xC75D00, 0xFFB264),
-        CardState::Failed => (0xC62828, 0xFF8A80),
-        CardState::Locked => (0x7B5BB0, 0xC3AEEB),
-        _ => return None,
-    };
-    let v: u32 = if dark { night } else { light };
-    Some(Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))
-}
-
-fn word_face(ui: &mut egui::Ui, s: &Scheme, word: &Word, state: Option<CardState>, dark: bool, sentence: &str) -> Option<Action> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(&word.spelling).font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
-        if word.reading != word.spelling && !word.reading.is_empty() {
-            ui.label(RichText::new(&word.reading).font(font(text::TITLE_MEDIUM)).color(c(s.on_surface_variant)));
+    fn options_face(&self, ui: &mut egui::Ui, s: &Scheme, grader: Option<&dyn Grader>, word: &Word, dark: bool) -> Option<Action> {
+        let mut action = None;
+        if option_tile(ui, s, ICON_CONTENT_COPY, "Copy", true) {
+            action = Some(Action::Copy(word.spelling.clone()));
         }
-    });
-    let kinds = pos_labels(&word.pos);
-    if state.is_some() || !kinds.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            if let Some(state) = state {
-                m3::outlined_chip(ui, state.label(), state_colour(state, dark).unwrap_or(c(s.on_surface_variant)));
-            }
-            if !kinds.is_empty() {
-                ui.label(RichText::new(kinds.join(", ")).font(font(text::LABEL_MEDIUM)).color(c(s.on_surface_variant)));
-            }
-        });
-    }
-    ui.add_space(4.0);
-    if word.meanings.is_empty() {
-        ui.label(RichText::new("Not in the dictionary.").color(c(s.on_surface_variant)));
-    }
-    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-        for (i, m) in word.meanings.iter().take(8).enumerate() {
-            ui.label(RichText::new(format!("{}. {m}", i + 1)).font(font(text::BODY_MEDIUM)).color(c(s.on_surface)));
-        }
-    });
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
         // jpdb.io's vocabulary ids are JMdict's.
         if let Some(id) = word.jmdict_id
-            && m3::text_button(ui, s, "jpdb.io").clicked()
+            && option_tile(ui, s, ICON_OPEN_IN_NEW, "Open on jpdb.io", true)
         {
             action = Some(Action::Open(format!("https://jpdb.io/vocabulary/{id}/{}", urlencode(&word.spelling))));
         }
-        if m3::text_button(ui, s, "Jisho").clicked() {
-            action = Some(Action::Open(format!("https://jisho.org/search/{}", urlencode(&word.spelling))));
+        let Some(g) = grader.filter(|_| word.jmdict_id.is_some()) else { return action };
+        if let Some(deck) = g.deck_name()
+            && option_tile(ui, s, ICON_ADD, &format!("Add to {deck}"), !self.busy)
+        {
+            action = Some(Action::Add);
         }
-        if m3::text_button(ui, s, "Copy word").clicked() {
-            action = Some(Action::Copy(word.spelling.clone()));
+        for &a in g.actions() {
+            let icon = if a.contains("lacklist") { ICON_BLOCK } else { ICON_ALL_INCLUSIVE };
+            if option_tile(ui, s, icon, a, !self.busy) {
+                action = Some(Action::Act(a));
+            }
         }
-        if !sentence.is_empty() && m3::text_button(ui, s, "Copy sentence").clicked() {
-            action = Some(Action::Copy(sentence.to_owned()));
+        if has_card(self.state) {
+            ui.add_space(8.0);
+            let grades = g.grades();
+            let gap = 4.0;
+            let n = grades.len() as f32;
+            let bw = (ui.available_width() - gap * (n - 1.0)) / n;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for b in grades {
+                    let colour = state_colour(grade_state(b.value, grades.len()), dark);
+                    if grade_button(ui, b.label, colour, bw, !self.busy) {
+                        action = Some(Action::Grade(b.value));
+                    }
+                }
+            });
         }
-    });
-    action
+        action
+    }
+}
+
+fn meanings(ui: &mut egui::Ui, s: &Scheme, word: &Word) {
+    if word.meanings.is_empty() {
+        ui.label(RichText::new("Not in the dictionary.").size(13.0).color(c(s.on_surface_variant)));
+        return;
+    }
+    for (i, meaning) in word.meanings.iter().enumerate() {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let (r, _) = ui.allocate_exact_size(vec2(20.0, 18.0), Sense::hover());
+            ui.painter().text(
+                r.left_top() + vec2(0.0, 1.0),
+                egui::Align2::LEFT_TOP,
+                format!("{}.", i + 1),
+                egui::FontId::proportional(13.0),
+                c(s.on_surface_variant),
+            );
+            ui.add(
+                egui::Label::new(RichText::new(meaning).size(14.0).color(c(s.on_surface)).line_height(Some(19.6))).wrap().selectable(true),
+            );
+        });
+        ui.add_space(4.0);
+    }
+}
+
+// Every state has its colour; only a state not known yet has none.
+pub fn state_colour(state: CardState, dark: bool) -> Color32 {
+    let v = match state {
+        CardState::Known => [0x2e7d32, 0x69c67a],
+        CardState::NeverForget => [0x00695c, 0x4db6ac],
+        CardState::Learning => [0x9a6a00, 0xe7b95a],
+        CardState::Due => [0xb35309, 0xef9a55],
+        CardState::Failed => [0xc62828, 0xe06c6c],
+        CardState::New => [0x1565c0, 0x6ba8e8],
+        CardState::NotInDeck => [0x6b7280, 0x8a93a3],
+        CardState::Locked => [0x5e35b1, 0x9b8ec4],
+        CardState::Redundant => [0x78909c, 0x7f8896],
+        CardState::Suspended => [0x90a4ae, 0x6d737d],
+        CardState::Blacklisted => [0xb0bec5, 0x585e68],
+        CardState::Unknown => return Color32::TRANSPARENT,
+    }[dark as usize];
+    Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
+}
+
+fn state_chip(ui: &mut egui::Ui, state: CardState, colour: Color32) {
+    let galley = ui.painter().layout_no_wrap(state.label().to_owned(), egui::FontId::proportional(10.0), colour);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(12.0, 4.0), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(255), m3::alpha(colour, 0.16));
+    ui.painter().rect_stroke(rect, CornerRadius::same(255), Stroke::new(1.0, m3::alpha(colour, 0.5)), StrokeKind::Inside);
+    ui.painter().galley(rect.min + vec2(6.0, 2.0), galley, colour);
+}
+
+fn pill(ui: &mut egui::Ui, s: &Scheme, label: &str) {
+    let ink = c(s.on_surface_variant);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), egui::FontId::proportional(10.0), ink);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(12.0, 4.0), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(255), m3::alpha(c(s.outline_variant), 0.6));
+    ui.painter().galley(rect.min + vec2(6.0, 2.0), galley, ink);
+}
+
+fn progress_bar(ui: &mut egui::Ui, s: &Scheme) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 2.0), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::ZERO, c(s.primary_container));
+    let t = ui.input(|i| i.time) as f32;
+    let span = rect.width() * 0.3;
+    let x = rect.left() + (t * 0.8).fract() * (rect.width() + span) - span;
+    let bar = Rect::from_min_max(pos2(x.max(rect.left()), rect.top()), pos2((x + span).min(rect.right()), rect.bottom()));
+    ui.painter().rect_filled(bar, CornerRadius::ZERO, c(s.primary));
+    ui.ctx().request_repaint();
+}
+
+fn small_icon_button(ui: &mut egui::Ui, s: &Scheme, icon: MaterialIcon) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
+    ui.painter().circle_filled(rect.center(), 16.0, m3::alpha(c(s.on_surface), m3::state_layer(&response)));
+    m3::paint_icon(ui, icon, rect.center(), 18.0, c(s.on_surface_variant));
+    response
+}
+
+fn option_tile(ui: &mut egui::Ui, s: &Scheme, icon: MaterialIcon, label: &str, enabled: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), if enabled { Sense::click() } else { Sense::hover() });
+    if enabled && response.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(6), m3::alpha(c(s.on_surface), 0.08));
+    }
+    let ink = if enabled { c(s.on_surface) } else { c(s.on_surface_variant) };
+    m3::paint_icon(ui, icon, pos2(rect.left() + 13.0, rect.center().y), 18.0, ink);
+    ui.painter().text(pos2(rect.left() + 32.0, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(13.0), ink);
+    enabled && response.clicked()
+}
+
+fn grade_button(ui: &mut egui::Ui, label: &str, colour: Color32, width: f32, enabled: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 34.0), if enabled { Sense::click() } else { Sense::hover() });
+    let radius = CornerRadius::same(4);
+    ui.painter().rect_filled(rect, radius, m3::alpha(colour, if enabled { 0.14 } else { 0.06 }));
+    if enabled && response.hovered() {
+        ui.painter().rect_filled(rect, radius, m3::alpha(colour, 0.08));
+    }
+    ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, m3::alpha(colour, 0.45)), StrokeKind::Inside);
+    let ink = if enabled { colour } else { m3::alpha(colour, 0.5) };
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(12.0), ink);
+    enabled && response.clicked()
 }
 
 fn pos_labels(tags: &[String]) -> Vec<&'static str> {
