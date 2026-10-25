@@ -15,13 +15,13 @@ use rubiyomi_core::stats::Stats;
 use rubiyomi_core::theme::{self, Scheme};
 
 use crate::reviews::Reviews;
+use crate::screens::Ctx;
 use crate::screens::library::LibraryScreen;
 use crate::screens::reader::ReaderScreen;
 use crate::screens::settings::SettingsScreen;
 use crate::screens::setup::Setup;
 use crate::screens::stats::StatsScreen;
 use crate::screens::words::WordsScreen;
-use crate::screens::Ctx;
 use crate::task::{self, Task};
 use crate::ui::{fonts, m3};
 
@@ -46,10 +46,13 @@ pub struct App {
     words: WordsScreen,
     stats_screen: StatsScreen,
     awake: bool,
+    // From launch until the reopened book's first page is drawn.
+    reopening: Option<std::time::Instant>,
 }
 
 impl App {
     pub fn new(ctx: &egui::Context, platform: Arc<dyn Platform>) -> Self {
+        let launched = std::time::Instant::now();
         fonts::install(ctx);
         let waker = ctx.clone();
         platform.set_waker(Box::new(move || waker.request_repaint()));
@@ -69,8 +72,14 @@ impl App {
         };
         let reviews = Reviews::new(ctx, &*platform);
         let dir = platform.data_dir();
+        let page = PageSettings::load(&dir);
+        let reader =
+            page.open_last_on_launch.then(|| library.last_read()).flatten().and_then(|(meta, _)| {
+                ReaderScreen::open(&library, meta, None).map_err(|e| log::warn!("reopening the last book: {e}")).ok()
+            });
         App {
-            page: PageSettings::load(&dir),
+            reopening: reader.is_some().then_some(launched),
+            page,
             history: History::load(&dir),
             stats: Stats::load(&dir),
             words: WordsScreen::default(),
@@ -81,7 +90,7 @@ impl App {
             schemes,
             section: 0,
             shelf: LibraryScreen::default(),
-            reader: None,
+            reader,
             snackbar: m3::Snackbar::default(),
             imports: Vec::new(),
             settings: SettingsScreen::default(),
@@ -226,7 +235,11 @@ impl App {
             return;
         }
         if let Some(reader) = &mut self.reader {
-            if reader.ui(ui, &mut cx) {
+            let close = reader.ui(ui, &mut cx);
+            if let Some(since) = self.reopening.take() {
+                log::info!("reopened the last book in {} ms", since.elapsed().as_millis());
+            }
+            if close {
                 self.reader = None;
                 self.shelf.refresh(&ctx, &self.library);
             }

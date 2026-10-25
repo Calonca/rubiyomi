@@ -142,7 +142,9 @@ pub struct PageSettings {
     pub colours: WordColours,
     pub tap_to_turn: bool,
     pub keep_awake: bool,
-    pub show_percent: bool,
+    // The page number and the percentage read, under the page.
+    pub show_position: bool,
+    pub open_last_on_launch: bool,
 }
 
 impl Default for PageSettings {
@@ -159,7 +161,8 @@ impl Default for PageSettings {
             colours: WordColours::Text,
             tap_to_turn: false,
             keep_awake: true,
-            show_percent: true,
+            show_position: false,
+            open_last_on_launch: true,
         }
     }
 }

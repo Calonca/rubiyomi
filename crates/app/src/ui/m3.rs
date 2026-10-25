@@ -468,3 +468,17 @@ pub fn slider_row(
     });
     changed
 }
+
+// A determinate progress bar: the done part, a gap, then the track, as Material 3 draws it.
+pub fn progress(p: &egui::Painter, s: &Scheme, rect: Rect, fraction: f32) {
+    let f = fraction.clamp(0.0, 1.0);
+    let radius = CornerRadius::same((rect.height() / 2.0) as u8);
+    let split = rect.left() + rect.width() * f;
+    if f < 1.0 {
+        let track = Rect::from_min_max(pos2((split + 4.0).min(rect.right()), rect.top()), rect.max);
+        p.rect_filled(track, radius, c(s.secondary_container));
+    }
+    if f > 0.0 {
+        p.rect_filled(Rect::from_min_max(rect.min, pos2(split.max(rect.left() + rect.height()), rect.bottom())), radius, c(s.primary));
+    }
+}

@@ -3,14 +3,14 @@
 
 use std::collections::HashMap;
 
-use egui::{Align2, CornerRadius, Rect, Sense, Ui, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, Rect, Sense, Ui, pos2, vec2};
 use egui_material_icons::icons::{ICON_ADD, ICON_DELETE, ICON_LOCAL_LIBRARY};
 use rubiyomi_core::library::{BookId, BookMeta, Library, Progress};
-use rubiyomi_core::theme::Scheme;
 
 use super::Ctx;
 use super::reader::ReaderScreen;
 use crate::task::Task;
+use crate::ui::fonts::BOOK_SERIF;
 use crate::ui::m3::{self, c, font, text};
 
 type Decoded = (BookId, egui::ColorImage);
@@ -83,7 +83,7 @@ impl LibraryScreen {
         let columns = ((width + 16.0) / (104.0 + 16.0)).floor().max(2.0) as usize;
         let cell_w = (width - 16.0 * (columns as f32 - 1.0)) / columns as f32;
         let cover_h = cell_w * 1.5;
-        let cell_h = cover_h + 8.0 + 2.0 * 20.0 + 18.0;
+        let cell_h = cover_h + 8.0 + 8.0 + 2.0 * 20.0 + 18.0;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             ui.add_space(8.0);
             let rows = self.books.len().div_ceil(columns);
@@ -96,14 +96,18 @@ impl LibraryScreen {
                 let response = ui.interact(rect, ui.id().with(("book", &meta.id)), Sense::click());
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &meta.title));
                 let cover = Rect::from_min_size(min, vec2(cell_w, cover_h));
-                paint_cover(ui, s, cover, self.covers.get(&meta.id), &meta.title);
+                let front = paint_book(ui, cover, self.covers.get(&meta.id), meta);
                 let layer = m3::state_layer(&response);
                 if layer > 0.0 {
-                    ui.painter().rect_filled(cover, CornerRadius::same(12), m3::alpha(c(s.on_surface), layer));
+                    ui.painter().rect_filled(front, COVER_RADIUS, m3::alpha(c(s.on_surface), layer));
+                }
+                let bar = Rect::from_min_size(pos2(min.x, cover.bottom() + 8.0), vec2(cell_w, 4.0));
+                if progress.updated != 0 {
+                    m3::progress(ui.painter(), s, bar, progress.fraction);
                 }
                 let title = ui.painter().layout(meta.title.clone(), font(text::TITLE_MEDIUM - 2.0), c(s.on_surface), cell_w);
                 let title_rows = title.rows.len().min(2);
-                let title_rect = Rect::from_min_size(pos2(min.x, cover.bottom() + 8.0), vec2(cell_w, 40.0));
+                let title_rect = Rect::from_min_size(pos2(min.x, bar.bottom() + 8.0), vec2(cell_w, 40.0));
                 ui.painter().with_clip_rect(title_rect).galley(title_rect.min, title, c(s.on_surface));
                 let percent = (progress.fraction * 100.0).round() as u32;
                 let line = if progress.updated == 0 { meta.author.clone() } else { format!("{percent}% · {}", meta.author) };
@@ -163,12 +167,44 @@ impl LibraryScreen {
     }
 }
 
-fn paint_cover(ui: &Ui, s: &Scheme, rect: Rect, texture: Option<&egui::TextureHandle>, title: &str) {
-    let radius = CornerRadius::same(12);
+// The spine is on the left, so its corners are the sharper ones.
+const COVER_RADIUS: CornerRadius = CornerRadius { nw: 2, sw: 2, ne: 5, se: 5 };
+
+fn gradient(p: &egui::Painter, r: Rect, left: Color32, right: Color32) {
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(r.left_top(), left);
+    mesh.colored_vertex(r.right_top(), right);
+    mesh.colored_vertex(r.right_bottom(), right);
+    mesh.colored_vertex(r.left_bottom(), left);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    p.add(egui::Shape::mesh(mesh));
+}
+
+// A cloth colour for a book without a cover, the same for the same title every time.
+fn cloth(title: &str) -> Color32 {
+    let hash = title.chars().fold(2166136261u32, |h, ch| (h ^ ch as u32).wrapping_mul(16777619));
+    let hue = (hash % 360) as f32 / 360.0;
+    egui::ecolor::Hsva::new(hue, 0.45, 0.42, 1.0).into()
+}
+
+// A book seen from the front: a shadow under it, the edges of its pages on the right,
+// the cover, and the spine's fold. Returns the cover's rect.
+fn paint_book(ui: &Ui, rect: Rect, texture: Option<&egui::TextureHandle>, meta: &BookMeta) -> Rect {
+    let p = ui.painter();
+    let front = Rect::from_min_max(rect.min, pos2(rect.right() - 4.0, rect.bottom()));
+    let pages = Rect::from_min_max(pos2(front.right() - 6.0, rect.top() + 3.0), pos2(rect.right(), rect.bottom() - 3.0));
+    let shadow = egui::epaint::Shadow { offset: [2, 4], blur: 10, spread: 0, color: Color32::from_black_alpha(90) };
+    p.add(shadow.as_shape(front, COVER_RADIUS));
+    p.rect_filled(pages, CornerRadius { nw: 0, sw: 0, ne: 3, se: 3 }, Color32::from_rgb(0xee, 0xe6, 0xd3));
+    for k in 1..3 {
+        let x = pages.right() - k as f32 * 1.5;
+        p.vline(x, pages.top() + 1.0..=pages.bottom() - 1.0, egui::Stroke::new(0.5, Color32::from_rgb(0xc9, 0xbf, 0xa8)));
+    }
     match texture {
         Some(t) => {
             let [w, h] = t.size().map(|v| v as f32);
-            let (cell_ratio, img_ratio) = (rect.width() / rect.height(), w / h);
+            let (cell_ratio, img_ratio) = (front.width() / front.height(), w / h);
             let uv = if img_ratio > cell_ratio {
                 let span = cell_ratio / img_ratio;
                 Rect::from_min_max(pos2((1.0 - span) / 2.0, 0.0), pos2((1.0 + span) / 2.0, 1.0))
@@ -176,12 +212,31 @@ fn paint_cover(ui: &Ui, s: &Scheme, rect: Rect, texture: Option<&egui::TextureHa
                 let span = img_ratio / cell_ratio;
                 Rect::from_min_max(pos2(0.0, (1.0 - span) / 2.0), pos2(1.0, (1.0 + span) / 2.0))
             };
-            egui::Image::new(t).uv(uv).corner_radius(radius).paint_at(ui, rect);
+            egui::Image::new(t).uv(uv).corner_radius(COVER_RADIUS).paint_at(ui, front);
         }
         None => {
-            ui.painter().rect_filled(rect, radius, c(s.secondary_container));
-            let galley = ui.painter().layout(title.to_owned(), font(text::TITLE_MEDIUM), c(s.on_secondary_container), rect.width() - 24.0);
-            ui.painter().with_clip_rect(rect.shrink(12.0)).galley(rect.min + vec2(12.0, 16.0), galley, c(s.on_secondary_container));
+            let base = cloth(&meta.title);
+            p.rect_filled(front, COVER_RADIUS, base);
+            let ink = Color32::from_rgb(0xf3, 0xec, 0xdc);
+            let frame = front.shrink2(vec2(front.width() * 0.1 + 4.0, front.width() * 0.1));
+            p.rect_stroke(frame, CornerRadius::ZERO, egui::Stroke::new(1.0, m3::alpha(ink, 0.45)), egui::StrokeKind::Inside);
+            let wrap = frame.width() - 12.0;
+            let family = egui::FontFamily::Name(BOOK_SERIF.into());
+            let title = p.layout(meta.title.clone(), egui::FontId::new((front.width() / 7.0).clamp(12.0, 20.0), family.clone()), ink, wrap);
+            let at = pos2(frame.center().x - title.size().x / 2.0, frame.top() + frame.height() * 0.22);
+            p.with_clip_rect(frame.shrink(4.0)).galley(at, title, ink);
+            if !meta.author.is_empty() {
+                let author = p.layout(meta.author.clone(), egui::FontId::new(11.0, family), m3::alpha(ink, 0.8), wrap);
+                let at = pos2(frame.center().x - author.size().x / 2.0, frame.bottom() - 10.0 - author.size().y);
+                p.with_clip_rect(frame.shrink(4.0)).galley(at, author, m3::alpha(ink, 0.8));
+            }
         }
     }
+    // The fold where the cover bends round the spine, and light falling across it.
+    let fold = front.left() + front.width() * 0.07;
+    gradient(p, Rect::from_min_max(front.min, pos2(fold, front.bottom())), Color32::from_black_alpha(70), Color32::from_black_alpha(10));
+    p.vline(fold, front.y_range(), egui::Stroke::new(1.0, Color32::from_white_alpha(28)));
+    p.vline(fold + 1.5, front.y_range(), egui::Stroke::new(1.0, Color32::from_black_alpha(40)));
+    gradient(p, Rect::from_min_max(pos2(fold + 2.0, front.top()), front.max), Color32::from_white_alpha(14), Color32::TRANSPARENT);
+    front
 }

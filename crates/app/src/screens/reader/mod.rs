@@ -313,7 +313,7 @@ impl ReaderScreen {
             vertical: p.vertical,
             paginated: true,
             width: (area.width() - 2.0 * p.margin).max(40.0),
-            height: (area.height() - p.margin - p.margin.max(FOOTER)).max(40.0),
+            height: (area.height() - p.margin - if p.show_position { p.margin.max(FOOTER) } else { p.margin }).max(40.0),
             font_size: p.font_size,
             line_height: p.line_height,
             show_ruby: p.furigana != Furigana::Hide,
@@ -587,14 +587,9 @@ impl ReaderScreen {
                 }
             }
         }
-        if !self.bar {
+        if !self.bar && p.show_position {
             let percent = (self.meta.fraction_at(self.index, self.offset()) * 100.0).floor();
-            let label = match (self.pages.len() > 1, p.show_percent) {
-                (true, true) => format!("{} / {} · {percent:.0}%", self.page + 1, self.pages.len()),
-                (true, false) => format!("{} / {}", self.page + 1, self.pages.len()),
-                (false, true) => format!("{percent:.0}%"),
-                (false, false) => String::new(),
-            };
+            let label = format!("{} / {} · {percent:.0}%", self.page + 1, self.pages.len());
             ui.painter().text(
                 pos2(area.center().x, area.bottom() - p.margin.max(FOOTER) / 2.0),
                 Align2::CENTER_CENTER,
@@ -897,28 +892,32 @@ impl ReaderScreen {
                     });
                 });
         });
-        let percent = (self.meta.fraction_at(self.index, self.offset()) * 100.0).floor();
-        let progress = format!(
-            "Chapter {} of {} · page {} of {} · {percent:.0}%",
-            self.index + 1,
-            self.meta.chapters.len(),
-            self.page + 1,
-            self.pages.len()
-        );
-        let height = 48.0 + inset.bottom as f32;
+        let book = self.meta.fraction_at(self.index, self.offset());
+        let chapter = (self.page + 1) as f32 / self.pages.len().max(1) as f32;
+        let rows = [
+            (
+                format!("Chapter {} of {}", self.index + 1, self.meta.chapters.len()),
+                format!("page {} of {}", self.page + 1, self.pages.len()),
+                chapter,
+            ),
+            ("Book".to_owned(), format!("{:.0}%", (book * 100.0).floor()), book),
+        ];
+        let height = 16.0 + 40.0 * rows.len() as f32 + inset.bottom as f32;
         egui::Area::new(egui::Id::new("reader-bottom-bar"))
             .order(egui::Order::Foreground)
             .fixed_pos(pos2(screen.left(), screen.bottom() - height))
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(screen.width(), height), Sense::hover());
-                ui.painter().rect_filled(rect, 0.0, c(s.surface_container));
-                ui.painter().text(
-                    pos2(rect.center().x, rect.top() + 24.0),
-                    Align2::CENTER_CENTER,
-                    progress,
-                    font(text::BODY_MEDIUM),
-                    c(s.on_surface_variant),
-                );
+                let p = ui.painter();
+                p.rect_filled(rect, 0.0, c(s.surface_container));
+                let left = rect.left() + 24.0 + inset.left as f32;
+                let right = rect.right() - 24.0 - inset.right as f32;
+                for (i, (name, figure, fraction)) in rows.iter().enumerate() {
+                    let top = rect.top() + 12.0 + 40.0 * i as f32;
+                    p.text(pos2(left, top), Align2::LEFT_TOP, name, font(text::BODY_MEDIUM), c(s.on_surface));
+                    p.text(pos2(right, top), Align2::RIGHT_TOP, figure, font(text::BODY_MEDIUM), c(s.on_surface_variant));
+                    m3::progress(p, s, egui::Rect::from_min_max(pos2(left, top + 24.0), pos2(right, top + 28.0)), *fraction);
+                }
             });
         close
     }

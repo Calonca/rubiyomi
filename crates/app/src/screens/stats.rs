@@ -133,12 +133,24 @@ pub struct StatsScreen {
     granularity: Granularity,
     // The bar under the finger, per chart, if one is.
     picked: [Option<usize>; 5],
+    // A finger is held on a chart: the page doesn't scroll under it.
+    holding: bool,
 }
 
 impl Default for StatsScreen {
     fn default() -> Self {
-        StatsScreen { granularity: Granularity::Day, picked: [None; 5] }
+        StatsScreen { granularity: Granularity::Day, picked: [None; 5], holding: false }
     }
+}
+
+// How long a finger rests on a chart before it picks instead of scrolling.
+const HOLD: f64 = 0.3;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Gesture {
+    Waiting { since: f64, at: Pos2 },
+    Picking,
+    Scrolling,
 }
 
 impl StatsScreen {
@@ -162,8 +174,13 @@ impl StatsScreen {
                 );
                 return;
             }
-            let periods = stats.periods(self.granularity, self.count(), today());
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let source = if self.holding {
+                egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() }
+            } else {
+                egui::scroll_area::ScrollSource::default()
+            };
+            let mut holding = false;
+            egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_source(source).show(ui, |ui| {
                 egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 8, bottom: 32 }).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     let all = [Granularity::Day, Granularity::Week, Granularity::Month];
@@ -171,8 +188,8 @@ impl StatsScreen {
                     if m3::segmented(ui, s, &["Day", "Week", "Month"], &mut i) {
                         self.granularity = all[i];
                         self.picked = [None; 5];
-                        return;
                     }
+                    let periods = stats.periods(self.granularity, self.count(), today());
                     ui.add_space(16.0);
                     let current = &periods[periods.len() - 1];
                     let previous = &periods[periods.len() - 2];
@@ -191,11 +208,12 @@ impl StatsScreen {
                     tile_grid(ui, s, &current.stats, &previous.stats);
                     ui.add_space(24.0);
                     for (i, m) in Metric::ALL.into_iter().enumerate() {
-                        chart_card(ui, s, m, &periods, self.granularity, &mut self.picked[i]);
+                        holding |= chart_card(ui, s, m, &periods, self.granularity, &mut self.picked[i]);
                         ui.add_space(16.0);
                     }
                 });
             });
+            self.holding = holding;
         });
     }
 }
@@ -248,7 +266,9 @@ fn stat_tile(ui: &mut Ui, s: &Scheme, m: Metric, now: Option<f64>, before: Optio
         });
 }
 
-fn chart_card(ui: &mut Ui, s: &Scheme, m: Metric, periods: &[Period], g: Granularity, picked: &mut Option<usize>) {
+// Says whether a finger is holding the chart.
+fn chart_card(ui: &mut Ui, s: &Scheme, m: Metric, periods: &[Period], g: Granularity, picked: &mut Option<usize>) -> bool {
+    let mut holding = false;
     let values: Vec<Option<f64>> = periods.iter().map(|pd| m.of(&pd.stats)).collect();
     let shown = picked.unwrap_or(periods.len() - 1);
     let caption = match picked {
@@ -270,38 +290,43 @@ fn chart_card(ui: &mut Ui, s: &Scheme, m: Metric, periods: &[Period], g: Granula
             ui.add_space(2.0);
             ui.label(RichText::new(caption).font(font(12.0)).color(c(s.on_surface_variant)));
             ui.add_space(10.0);
-            // A press picks the period under the finger and a sideways drag keeps picking;
-            // a drag up or down scrolls the page, and the pick goes.
-            let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 140.0), Sense::click());
+            // Held still for a moment, a finger picks the period under it and can slide
+            // sideways to pick others; moving first, it scrolls the page instead.
+            let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 140.0), Sense::hover());
             let n = periods.len();
-            let gesture_id = response.id.with("gesture");
-            // None: no press here; Some(None): undecided; Some(Some(sideways)).
-            let mut gesture: Option<Option<bool>> = ui.data(|d| d.get_temp(gesture_id)).unwrap_or(None);
-            let (pressed, down, origin, now) =
-                ui.input(|i| (i.pointer.any_pressed(), i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos()));
-            if pressed && origin.is_some_and(|o| rect.contains(o)) {
-                gesture = Some(None);
+            let id = response.id.with("gesture");
+            let mut gesture: Option<Gesture> = ui.data(|d| d.get_temp(id)).unwrap_or(None);
+            let (pressed, down, origin, at, time) = ui
+                .input(|i| (i.pointer.any_pressed(), i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos(), i.time));
+            if pressed && let Some(o) = origin.filter(|o| rect.contains(*o)) {
+                gesture = Some(Gesture::Waiting { since: time, at: o });
             }
             if !down {
                 gesture = None;
             }
-            if let (Some(None), Some(o), Some(at)) = (gesture, origin, now) {
-                let moved = at - o;
-                if moved.length() > 6.0 {
-                    gesture = Some(Some(moved.x.abs() >= moved.y.abs()));
+            if let (Some(Gesture::Waiting { since, at: start }), Some(now)) = (gesture, at) {
+                if (now - start).length() > 8.0 {
+                    gesture = Some(Gesture::Scrolling);
+                } else if time - since >= HOLD {
+                    gesture = Some(Gesture::Picking);
+                } else {
+                    ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(HOLD - (time - since)));
                 }
             }
-            match (gesture, now) {
-                (Some(None) | Some(Some(true)), Some(at)) => {
+            match (gesture, at) {
+                (Some(Gesture::Picking), Some(at)) => {
                     let i = (((at.x - rect.left()) / rect.width() * n as f32).floor() as isize).clamp(0, n as isize - 1) as usize;
                     *picked = Some(i);
                 }
+                (Some(Gesture::Waiting { .. }), _) => {}
                 _ => *picked = None,
             }
-            ui.data_mut(|d| d.insert_temp(gesture_id, gesture));
+            ui.data_mut(|d| d.insert_temp(id, gesture));
+            holding = gesture == Some(Gesture::Picking);
             let labels: Vec<String> = periods.iter().map(|pd| tick(pd, g)).collect();
             paint_series(ui, rect, s, m, &values, &labels, shown);
         });
+    holding
 }
 
 // The whole chart in one line: the best period, or which way a rate went.

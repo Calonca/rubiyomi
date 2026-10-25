@@ -39,8 +39,9 @@ pub fn ui(ui: &mut egui::Ui, s: &Scheme, p: &mut PageSettings, colours_matter: b
     changed |= m3::switch_row(ui, s, "Vertical text", "Columns read from right to left", &mut p.vertical);
     m3::section_header(ui, s, "Reading");
     changed |= m3::switch_row(ui, s, "Tap the edges to turn", "Otherwise swipe, or use the keys", &mut p.tap_to_turn);
-    changed |= m3::switch_row(ui, s, "Show how far you are", "A percentage under the page", &mut p.show_percent);
+    changed |= m3::switch_row(ui, s, "Page number and percentage", "Under the page", &mut p.show_position);
     changed |= m3::switch_row(ui, s, "Keep the screen on", "While a book is open", &mut p.keep_awake);
+    changed |= m3::switch_row(ui, s, "Reopen the last book", "On launch, where you left it", &mut p.open_last_on_launch);
     changed
 }
 
