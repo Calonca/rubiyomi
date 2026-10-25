@@ -4,7 +4,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chrono::{Days, Local, NaiveDate};
+pub use chrono::NaiveDate;
+use chrono::{Days, Local};
 use serde::{Deserialize, Serialize};
 
 use crate::library::fsutil::{read_json_or_default, write_json};
@@ -100,6 +101,6 @@ mod tests {
         assert_eq!(stats.streak(d("2026-10-25")), 3, "today not read yet");
         assert_eq!(stats.streak(d("2026-10-24")), 3);
         assert_eq!(stats.streak(d("2026-10-27")), 0);
-        assert_eq!(Stats::load(&stats.path.parent().unwrap().to_path_buf()).day(d("2026-10-20")).seconds, 600, "kept on disk");
+        assert_eq!(Stats::load(stats.path.parent().unwrap()).day(d("2026-10-20")).seconds, 600, "kept on disk");
     }
 }

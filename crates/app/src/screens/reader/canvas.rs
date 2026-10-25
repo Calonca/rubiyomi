@@ -46,13 +46,31 @@ pub struct PaintOptions {
 }
 
 // Each word is drawn in the colour of its card.
-pub fn paint_page(painter: &Painter, origin: Pos2, page: &Page, o: &PaintOptions, ink: impl Fn(usize) -> Option<Color32>) {
+pub fn paint_page(
+    painter: &Painter,
+    origin: Pos2,
+    page: &Page,
+    o: &PaintOptions,
+    ink: impl Fn(usize) -> Option<Color32>,
+    faint: impl Fn(usize, usize) -> bool,
+) {
     for g in &page.glyphs {
         paint_glyph(painter, origin, g, &o.family, ink(g.offset).unwrap_or(o.text));
     }
     for r in &page.ruby {
         let rect = to_screen(origin, &r.rect);
-        painter.text(rect.center(), Align2::CENTER_CENTER, &r.text, FontId::new(r.size, o.family.clone()), o.ruby);
+        let font = FontId::new(r.size, o.family.clone());
+        if faint(r.block, r.run) {
+            // egui can't blur, so the reading is smeared: faint copies around where it would be.
+            let spread = r.size * 0.18;
+            let smear = crate::ui::m3::alpha(o.ruby, 0.07);
+            for i in 0..8 {
+                let a = i as f32 * std::f32::consts::FRAC_PI_4;
+                painter.text(rect.center() + vec2(a.cos(), a.sin()) * spread, Align2::CENTER_CENTER, &r.text, font.clone(), smear);
+            }
+        } else {
+            painter.text(rect.center(), Align2::CENTER_CENTER, &r.text, font, o.ruby);
+        }
     }
 }
 

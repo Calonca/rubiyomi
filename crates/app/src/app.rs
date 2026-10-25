@@ -7,8 +7,11 @@ use std::sync::Arc;
 use egui_material_icons::icons::{ICON_DICTIONARY, ICON_INSIGHTS, ICON_LOCAL_LIBRARY, ICON_SETTINGS};
 use rubiyomi_core::dict::{DictState, DictStore};
 use rubiyomi_core::finder::Finder;
+use rubiyomi_core::history::History;
 use rubiyomi_core::library::{ImportError, Imported, Library};
 use rubiyomi_core::platform::{Platform, PlatformEvent};
+use rubiyomi_core::settings::PageSettings;
+use rubiyomi_core::stats::Stats;
 use rubiyomi_core::theme::{self, Scheme};
 
 use crate::reviews::Reviews;
@@ -16,6 +19,7 @@ use crate::screens::library::LibraryScreen;
 use crate::screens::reader::ReaderScreen;
 use crate::screens::settings::SettingsScreen;
 use crate::screens::setup::Setup;
+use crate::screens::words::WordsScreen;
 use crate::screens::{self, Ctx};
 use crate::task::{self, Task};
 use crate::ui::{fonts, m3};
@@ -35,6 +39,11 @@ pub struct App {
     loading: Option<Task<Result<Finder, String>>>,
     finder: Result<Arc<Finder>, String>,
     reviews: Reviews,
+    page: PageSettings,
+    history: History,
+    stats: Stats,
+    words: WordsScreen,
+    awake: bool,
 }
 
 impl App {
@@ -57,7 +66,13 @@ impl App {
             })
         };
         let reviews = Reviews::new(ctx, &*platform);
+        let dir = platform.data_dir();
         App {
+            page: PageSettings::load(&dir),
+            history: History::load(&dir),
+            stats: Stats::load(&dir),
+            words: WordsScreen::default(),
+            awake: false,
             platform,
             library,
             schemes,
@@ -183,6 +198,11 @@ impl App {
         self.poll_finder();
         self.reviews.poll();
         let s = self.schemes[(ctx.theme() == egui::Theme::Dark) as usize];
+        let awake = self.reader.is_some() && self.page.keep_awake;
+        if awake != self.awake {
+            self.awake = awake;
+            self.platform.keep_screen_on(awake);
+        }
         let mut cx = Ctx {
             scheme: &s,
             platform: &*self.platform,
@@ -191,6 +211,9 @@ impl App {
             finder: self.finder.as_ref().map_err(String::as_str),
             grader: self.reviews.grader.as_ref(),
             generation: self.reviews.generation,
+            page: &mut self.page,
+            history: &mut self.history,
+            stats: &mut self.stats,
         };
         if let Some(setup) = &mut self.setup {
             if setup.ui(ui, &s, &*self.platform, &mut self.reviews) {
@@ -211,9 +234,25 @@ impl App {
         m3::navigation_bar(ui, &s, &sections, &mut self.section);
         match self.section {
             0 => self.reader = self.shelf.ui(ui, &mut cx),
-            1 => screens::words::ui(ui, &s),
-            2 => screens::stats::ui(ui, &s),
-            _ => self.settings.ui(ui, &s, &*self.platform, &mut self.reviews, self.dicts.installed()),
+            1 => {
+                if let Some(jump) = self.words.ui(ui, &mut cx)
+                    && let Some(meta) = self.library.meta(&jump.book)
+                {
+                    match ReaderScreen::open(&self.library, meta, Some((jump.chapter, jump.offset, jump.len))) {
+                        Ok(reader) => self.reader = Some(reader),
+                        Err(e) => self.snackbar.show(&ctx, e),
+                    }
+                }
+            }
+            2 => screens::stats::ui(ui, &s, &self.stats),
+            _ => {
+                let colours = self.reviews.grader.is_some();
+                if self.settings.ui(ui, &s, &*self.platform, &mut self.reviews, self.dicts.installed(), &mut self.page, colours)
+                    && let Err(e) = self.page.save(&self.platform.data_dir())
+                {
+                    log::warn!("saving the page settings: {e}");
+                }
+            }
         }
         self.snackbar.ui(&ctx, &s, 80.0);
         if ctx.input(|i| i.key_pressed(egui::Key::BrowserBack)) && !(self.section == 3 && self.settings.back()) {

@@ -413,3 +413,58 @@ pub fn text_field(
     })
     .inner
 }
+
+// A setting that is on or off: the whole row toggles it.
+pub fn switch_row(ui: &mut Ui, s: &Scheme, headline: &str, supporting: &str, on: &mut bool) -> bool {
+    let height = if supporting.is_empty() { 56.0 } else { 72.0 };
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, headline));
+    ui.painter().rect_filled(rect, CornerRadius::ZERO, alpha(c(s.on_surface), state_layer(&response)));
+    let track = Rect::from_min_size(pos2(rect.right() - 16.0 - 52.0, rect.center().y - 16.0), vec2(52.0, 32.0));
+    let wrap = (track.left() - 16.0 - rect.left() - 16.0).max(40.0);
+    let p = ui.painter();
+    let head = p.layout(headline.to_owned(), font(text::BODY_LARGE), c(s.on_surface), wrap);
+    let sub = (!supporting.is_empty()).then(|| p.layout(supporting.to_owned(), font(text::BODY_MEDIUM), c(s.on_surface_variant), wrap));
+    let top = rect.center().y - (head.size().y + sub.as_ref().map_or(0.0, |g| g.size().y)) / 2.0;
+    let below = top + head.size().y;
+    p.galley(pos2(rect.left() + 16.0, top), head, c(s.on_surface));
+    if let Some(sub) = sub {
+        p.galley(pos2(rect.left() + 16.0, below), sub, c(s.on_surface_variant));
+    }
+    let t = ui.ctx().animate_bool(response.id, *on);
+    let fill = blend(c(s.surface_container_highest), c(s.primary), t);
+    p.rect_filled(track, CornerRadius::same(16), fill);
+    if t < 1.0 {
+        p.rect_stroke(track, CornerRadius::same(16), Stroke::new(2.0, alpha(c(s.outline), 1.0 - t)), egui::StrokeKind::Inside);
+    }
+    let knob = pos2(track.left() + 16.0 + 20.0 * t, track.center().y);
+    p.circle_filled(knob, 8.0 + 4.0 * t, blend(c(s.outline), c(s.on_primary), t));
+    if response.clicked() {
+        *on = !*on;
+        return true;
+    }
+    false
+}
+
+pub fn slider_row(
+    ui: &mut Ui,
+    s: &Scheme,
+    headline: &str,
+    shown: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    step: f64,
+) -> bool {
+    let mut changed = false;
+    egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 8, bottom: 0 }).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(headline).font(font(text::BODY_LARGE)).color(c(s.on_surface)));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(egui::RichText::new(shown).font(font(text::BODY_MEDIUM)).color(c(s.on_surface_variant)));
+            });
+        });
+        ui.spacing_mut().slider_width = ui.available_width();
+        changed = ui.add(egui::Slider::new(value, range).step_by(step).show_value(false)).changed();
+    });
+    changed
+}

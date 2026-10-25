@@ -70,6 +70,9 @@ pub trait Platform: Send + Sync {
     }
 
     // Keys go to the system's own store, never into our files. An empty value forgets one.
+    // While a book is open, if the reader asked for it.
+    fn keep_screen_on(&self, _on: bool) {}
+
     fn secret(&self, name: &str) -> Option<String> {
         let _ = name;
         None

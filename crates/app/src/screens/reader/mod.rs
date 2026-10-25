@@ -4,30 +4,47 @@
 mod canvas;
 mod popup;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
 use egui::{Align2, FontFamily, Sense, pos2, vec2};
-use egui_material_icons::icons::{ICON_ARROW_BACK, ICON_LIST};
+use egui_material_icons::icons::{ICON_ARROW_BACK, ICON_LIST, ICON_TEXT_FIELDS};
 use rubiyomi_core::cards::CardState;
 use rubiyomi_core::finder::Word;
 use rubiyomi_core::grade::{GradeError, StateMap};
+use rubiyomi_core::history::Place;
 use rubiyomi_core::library::{BookMeta, Library, Progress, fsutil::now};
 use rubiyomi_core::reader::layout::{self, LayoutBlock, LayoutConfig, Page, page_for_offset};
 use rubiyomi_core::reader::runs::{Run, book_runs};
+use rubiyomi_core::settings::{Furigana, PageSettings, Typeface, WordColours};
+use rubiyomi_core::stats::{Day, today};
 use rubiyomi_core::text::{Block, Chapter};
+use rubiyomi_core::theme::Scheme;
 
 use super::Ctx;
 use crate::task::{self, Task};
-use crate::ui::fonts::BOOK_SERIF;
+use crate::ui::fonts::{BOOK_SANS, BOOK_SERIF};
 use crate::ui::m3::{self, c, font, text};
+use crate::ui::page;
 use canvas::{EguiMeasure, PaintOptions, paint_page, to_screen};
-use popup::{Action, Content, Popup, state_colour};
+pub use popup::state_colour;
+use popup::{Action, Content, Popup};
 
-const FONT_SIZE: f32 = 24.0;
-const LINE_HEIGHT: f32 = 1.8;
-const MARGIN: f32 = 24.0;
+// Room under the page for its number, whatever the margins.
+const FOOTER: f32 = 28.0;
+// Longer than this without touching the page is not reading.
+const IDLE: f64 = 180.0;
+
+fn family(t: Typeface) -> FontFamily {
+    FontFamily::Name(
+        match t {
+            Typeface::Serif => BOOK_SERIF,
+            Typeface::Sans => BOOK_SANS,
+        }
+        .into(),
+    )
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Turn {
@@ -53,7 +70,7 @@ pub struct ReaderScreen {
     runs: Vec<Vec<Run>>,
     pages: Vec<Page>,
     page: usize,
-    laid_out: Option<LayoutConfig>,
+    laid_out: Option<(LayoutConfig, Typeface)>,
     want_offset: Option<usize>,
     want_last: bool,
     save_after_layout: bool,
@@ -71,11 +88,25 @@ pub struct ReaderScreen {
     colouring: Option<Task<Colours>>,
     asking: Option<Task<(usize, StateMap)>>,
     grading: Option<Task<Reviewed>>,
+    sheet: bool,
+    // Furigana of the words looked up, shown when the rest is faint.
+    revealed: HashSet<(usize, usize)>,
+    now: f64,
+    last_active: Option<f64>,
+    // Reading done since the stats were last written.
+    pending: Day,
+    seconds: f64,
 }
 
 impl ReaderScreen {
-    pub fn open(library: &Library, meta: BookMeta) -> Result<Self, String> {
-        let progress = library.progress(&meta.id);
+    // `at` opens the book at a word (chapter, offset, length) instead of where it was left.
+    pub fn open(library: &Library, meta: BookMeta, at: Option<(usize, usize, usize)>) -> Result<Self, String> {
+        let mut progress = library.progress(&meta.id);
+        if let Some((chapter, offset, len)) = at {
+            progress.chapter = chapter as u32;
+            progress.offset = offset as u32;
+            progress.word = Some((offset as u32, len as u32));
+        }
         let index = (progress.chapter as usize).min(meta.chapters.len().saturating_sub(1));
         let mark = progress.word.filter(|_| index == progress.chapter as usize).map(|(at, len)| at as usize..(at + len) as usize);
         let chapter = library.chapter(&meta.id, index).ok_or("This book's files are damaged. Remove it and add it again.")?;
@@ -103,6 +134,12 @@ impl ReaderScreen {
             colouring: None,
             asking: None,
             grading: None,
+            sheet: false,
+            revealed: HashSet::new(),
+            now: 0.0,
+            last_active: None,
+            pending: Day::default(),
+            seconds: 0.0,
         };
         reader.runs = reader.chapter_runs();
         Ok(reader)
@@ -120,6 +157,7 @@ impl ReaderScreen {
         let Some(chapter) = library.chapter(&self.meta.id, index) else { return false };
         self.popup = None;
         self.mark = None;
+        self.revealed.clear();
         self.index = index;
         self.chapter = chapter;
         self.runs = self.chapter_runs();
@@ -135,9 +173,17 @@ impl ReaderScreen {
         }
     }
 
-    fn turn(&mut self, library: &Library, turn: Turn) {
+    fn turn(&mut self, cx: &mut Ctx<'_>, turn: Turn) {
+        let library = cx.library;
         self.popup = None;
         self.mark = None;
+        if turn == Turn::Next
+            && let Some(page) = self.pages.get(self.page)
+        {
+            self.pending.chars += page.glyphs.iter().filter(|g| !g.text.trim().is_empty()).map(|g| g.len.max(1) as u64).sum::<u64>();
+        }
+        self.active();
+        self.flush(cx);
         match turn {
             Turn::Next if self.page + 1 < self.pages.len() => self.page += 1,
             Turn::Next if self.index + 1 < self.meta.chapters.len() => {
@@ -159,6 +205,24 @@ impl ReaderScreen {
         self.save(library);
     }
 
+    // Time counts from one touch of the page to the next, unless it was left alone too long.
+    fn active(&mut self) {
+        if let Some(last) = self.last_active {
+            let gap = self.now - last;
+            if gap > 0.0 && gap < IDLE {
+                self.seconds += gap;
+            }
+        }
+        self.last_active = Some(self.now);
+    }
+
+    fn flush(&mut self, cx: &mut Ctx<'_>) {
+        let mut done = std::mem::take(&mut self.pending);
+        done.seconds = self.seconds.floor() as u64;
+        self.seconds = self.seconds.fract();
+        cx.stats.add(today(), done);
+    }
+
     fn save(&mut self, library: &Library) {
         let offset = self.want_offset.unwrap_or_else(|| self.offset());
         let now_at = (self.index, offset, self.mark.clone());
@@ -178,21 +242,24 @@ impl ReaderScreen {
         }
     }
 
-    fn ensure_layout(&mut self, ctx: &egui::Context, area: egui::Rect) {
+    fn ensure_layout(&mut self, ctx: &egui::Context, area: egui::Rect, p: &PageSettings) {
         let config = LayoutConfig {
-            vertical: false,
+            vertical: p.vertical,
             paginated: true,
-            width: (area.width() - 2.0 * MARGIN).max(40.0),
-            height: (area.height() - 2.0 * MARGIN).max(40.0),
-            font_size: FONT_SIZE,
-            line_height: LINE_HEIGHT,
-            show_ruby: true,
+            width: (area.width() - 2.0 * p.margin).max(40.0),
+            height: (area.height() - p.margin - p.margin.max(FOOTER)).max(40.0),
+            font_size: p.font_size,
+            line_height: p.line_height,
+            show_ruby: p.furigana != Furigana::Hide,
             ruby_scale: 0.5,
-            max_chars_per_line: 0,
+            max_chars_per_line: p.max_chars_per_line,
             heading_scale: 1.25,
         };
-        if self.laid_out == Some(config) {
+        if self.laid_out == Some((config, p.typeface)) {
             return;
+        }
+        if self.laid_out.is_some() {
+            self.popup = None;
         }
         let keep = self.want_offset.take().or_else(|| self.laid_out.map(|_| self.offset()));
         let blocks: Vec<LayoutBlock<'_>> = self
@@ -209,12 +276,12 @@ impl ReaderScreen {
                 })
             })
             .collect();
-        let measure = EguiMeasure::new(ctx, FontFamily::Name(BOOK_SERIF.into()));
+        let measure = EguiMeasure::new(ctx, family(p.typeface));
         self.pages = layout::layout(&blocks, &config, &measure);
         if self.pages.is_empty() {
             self.pages.push(Page::default());
         }
-        self.laid_out = Some(config);
+        self.laid_out = Some((config, p.typeface));
         if std::mem::take(&mut self.want_last) {
             self.page = self.pages.len() - 1;
         } else if let Some(offset) = keep {
@@ -254,7 +321,12 @@ impl ReaderScreen {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Ctx<'_>) -> bool {
         let ctx = ui.ctx().clone();
-        let s = cx.scheme;
+        let page_scheme = page::scheme(cx.page.theme, cx.scheme);
+        let s = &page_scheme;
+        self.now = ctx.input(|i| i.time);
+        if self.last_active.is_none() {
+            self.last_active = Some(self.now);
+        }
         self.poll_images(&ctx);
         let inset = m3::insets(&ctx);
         let full = ui.max_rect();
@@ -263,14 +335,14 @@ impl ReaderScreen {
             full.max - vec2(inset.right as f32, inset.bottom as f32),
         );
         ui.painter().rect_filled(full, 0.0, c(s.surface));
-        self.ensure_layout(&ctx, area);
+        self.ensure_layout(&ctx, area, cx.page);
         if std::mem::take(&mut self.save_after_layout) {
             self.save(cx.library);
         }
         self.colour(&ctx, cx);
         self.ask_fresh(&ctx, cx);
         self.poll_grading(&ctx, cx);
-        self.page_ui(ui, cx, area);
+        self.page_ui(ui, cx, s, area);
 
         let mut close = false;
         if let Some(popup) = &mut self.popup
@@ -278,18 +350,22 @@ impl ReaderScreen {
         {
             self.review(&ctx, cx, action);
         }
-        if self.chapters {
-            if let Some(i) = self.chapter_list(&ctx, cx) {
+        if self.sheet {
+            self.page_sheet(&ctx, cx, s);
+        } else if self.chapters {
+            if let Some(i) = self.chapter_list(&ctx, s) {
                 self.go_to_chapter(cx.library, i);
                 self.chapters = false;
                 self.bar = false;
             }
         } else if self.bar {
-            close = self.bars(&ctx, cx);
+            close = self.bars(&ctx, s);
         }
         if ctx.input(|i| i.key_pressed(egui::Key::BrowserBack) || i.key_pressed(egui::Key::Escape)) {
             if self.popup.is_some() {
                 self.popup = None;
+            } else if self.sheet {
+                self.sheet = false;
             } else if self.chapters {
                 self.chapters = false;
             } else if self.bar {
@@ -297,35 +373,59 @@ impl ReaderScreen {
             } else {
                 close = true;
             }
-        } else if !self.chapters {
-            self.keys(&ctx, cx.library);
+        } else if !self.chapters && !self.sheet {
+            self.keys(&ctx, cx);
         }
         if close {
+            self.active();
+            self.flush(cx);
             self.save(cx.library);
         }
         close
     }
 
-    fn keys(&mut self, ctx: &egui::Context, library: &Library) {
-        let (next, prev) = ctx.input(|i| {
-            (
-                i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::Space),
-                i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::PageUp),
-            )
-        });
-        if next {
-            self.turn(library, Turn::Next);
+    fn keys(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>) {
+        let (right, left) = ctx.input(|i| (i.key_pressed(egui::Key::ArrowRight), i.key_pressed(egui::Key::ArrowLeft)));
+        let (forward, back) =
+            ctx.input(|i| (i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::Space), i.key_pressed(egui::Key::PageUp)));
+        // Columns run right to left, so the arrows swap.
+        let (next, prev) = if cx.page.vertical { (left, right) } else { (right, left) };
+        if next || forward {
+            self.turn(cx, Turn::Next);
         }
-        if prev {
-            self.turn(library, Turn::Previous);
+        if prev || back {
+            self.turn(cx, Turn::Previous);
         }
     }
 
-    fn page_ui(&mut self, ui: &mut egui::Ui, cx: &mut Ctx<'_>, area: egui::Rect) {
-        let s = cx.scheme;
+    fn page_sheet(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>, s: &Scheme) {
+        let screen = ctx.content_rect();
+        let frame = egui::Frame::new().fill(c(s.surface_container_high)).corner_radius(28).inner_margin(egui::Margin::symmetric(8, 16));
+        let modal = egui::Modal::new(egui::Id::new("page-settings")).frame(frame).show(ctx, |ui| {
+            ui.set_width(440.0_f32.min(screen.width() - 32.0));
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("Page").font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
+            });
+            egui::ScrollArea::vertical().max_height(screen.height() * 0.75).show(ui, |ui| {
+                if super::page_form::ui(ui, s, cx.page, cx.grader.is_some())
+                    && let Err(e) = cx.page.save(&cx.platform.data_dir())
+                {
+                    log::warn!("saving the page settings: {e}");
+                }
+            });
+        });
+        if modal.should_close() {
+            self.sheet = false;
+        }
+    }
+
+    fn page_ui(&mut self, ui: &mut egui::Ui, cx: &mut Ctx<'_>, s: &Scheme, area: egui::Rect) {
         let ctx = ui.ctx().clone();
+        let p = cx.page.clone();
         let response = ui.interact(area, ui.id().with("page"), Sense::click_and_drag());
-        let origin = area.min + vec2(MARGIN, MARGIN);
+        let origin = area.min + vec2(p.margin, p.margin);
+        let thickness = (p.font_size * 0.055).max(1.0);
         if let Some(page) = self.pages.get(self.page).cloned() {
             for img in &page.images {
                 let file = match self.chapter.blocks.get(img.block) {
@@ -345,40 +445,58 @@ impl ReaderScreen {
             let accent = c(s.primary);
             let selected = self.popup.as_ref().map(|p| p.span.clone());
             if let Some(mark) = self.mark.clone().filter(|m| Some(m) != selected.as_ref()) {
-                for line in line_boxes(&page, origin, &mark) {
+                for line in line_boxes(&page, origin, &mark, p.vertical) {
                     ui.painter().rect_filled(line.expand(1.0), 0.0, m3::alpha(accent, 0.12));
-                    let thickness = (FONT_SIZE * 0.055).max(1.0);
-                    let y = line.bottom() + thickness;
-                    ui.painter().line_segment([pos2(line.left(), y), pos2(line.right(), y)], egui::Stroke::new(thickness, accent));
+                    underline(ui.painter(), line, p.vertical, thickness, accent);
                 }
             }
             if let Some(span) = selected {
-                for line in line_boxes(&page, origin, &span) {
+                for line in line_boxes(&page, origin, &span, p.vertical) {
                     ui.painter().rect_filled(line.expand(1.0), 0.0, m3::alpha(accent, 0.22));
                 }
             }
-            let options =
-                PaintOptions { family: FontFamily::Name(BOOK_SERIF.into()), text: c(s.on_surface), ruby: m3::alpha(c(s.on_surface), 0.8) };
-            let dark = ctx.theme() == egui::Theme::Dark;
-            let colours = self.colours.as_ref().filter(|c| c.index == self.index);
+            let options = PaintOptions { family: family(p.typeface), text: c(s.on_surface), ruby: m3::alpha(c(s.on_surface), 0.8) };
+            let colours = self.colours.as_ref().filter(|c| c.index == self.index && p.colours != WordColours::Off);
+            let colour_of = |w: &Word| -> Option<egui::Color32> {
+                Some(state_colour(*colours?.states.get(&w.key())?, s.dark)).filter(|c| *c != egui::Color32::TRANSPARENT)
+            };
             let ink = |offset: usize| {
-                let c = colours?;
+                let c = colours.filter(|_| p.colours == WordColours::Text)?;
                 let w = &c.words[c.words.partition_point(|w| w.start <= offset).checked_sub(1)?];
                 (offset < w.start + w.len).then_some(())?;
-                Some(state_colour(*c.states.get(&w.key())?, dark)).filter(|c| *c != egui::Color32::TRANSPARENT)
+                colour_of(w)
             };
-            paint_page(ui.painter(), origin, &page, &options, ink);
+            let faint = |block: usize, run: usize| p.furigana == Furigana::Blur && !self.revealed.contains(&(block, run));
+            paint_page(ui.painter(), origin, &page, &options, ink, faint);
+            // Drawn a word and a line at a time, so a line under a word doesn't break between its glyphs.
+            if let Some(c) = colours.filter(|_| p.colours == WordColours::Underline) {
+                let lo = page.glyphs.iter().map(|g| g.offset).min().unwrap_or(0);
+                let hi = page.glyphs.iter().map(|g| g.offset).max().unwrap_or(0);
+                for w in c.words[c.words.partition_point(|w| w.start + w.len <= lo)..].iter().take_while(|w| w.start <= hi) {
+                    let Some(colour) = colour_of(w) else { continue };
+                    for line in line_boxes(&page, origin, &(w.start..w.start + w.len), p.vertical) {
+                        underline(ui.painter(), line, p.vertical, thickness, colour);
+                    }
+                }
+            }
         }
-        if self.pages.len() > 1 && !self.bar {
+        if !self.bar {
+            let percent = (self.meta.fraction_at(self.index, self.offset()) * 100.0).floor();
+            let label = match (self.pages.len() > 1, p.show_percent) {
+                (true, true) => format!("{} / {} · {percent:.0}%", self.page + 1, self.pages.len()),
+                (true, false) => format!("{} / {}", self.page + 1, self.pages.len()),
+                (false, true) => format!("{percent:.0}%"),
+                (false, false) => String::new(),
+            };
             ui.painter().text(
-                pos2(area.center().x, area.bottom() - MARGIN / 2.0),
+                pos2(area.center().x, area.bottom() - p.margin.max(FOOTER) / 2.0),
                 Align2::CENTER_CENTER,
-                format!("{} / {}", self.page + 1, self.pages.len()),
+                label,
                 font(11.0),
                 c(s.on_surface_variant),
             );
         }
-        if self.chapters {
+        if self.chapters || self.sheet {
             return;
         }
         if response.dragged() {
@@ -387,22 +505,27 @@ impl ReaderScreen {
         if response.drag_stopped() {
             let total = std::mem::take(&mut self.drag);
             if total.x.abs() > 48.0 && total.x.abs() > total.y.abs() {
-                self.turn(cx.library, if total.x < 0.0 { Turn::Next } else { Turn::Previous });
+                let forward = if p.vertical { total.x > 0.0 } else { total.x < 0.0 };
+                self.turn(cx, if forward { Turn::Next } else { Turn::Previous });
             }
         } else if response.clicked()
             && let Some(p) = response.interact_pointer_pos()
         {
             let third = area.width() / 3.0;
+            let edge = (p.x < area.left() + third) || (p.x > area.right() - third);
+            self.active();
             if self.popup.is_some() {
                 self.popup = None;
             } else if !self.bar
                 && let Some(offset) = self.glyph_at(p - origin)
             {
                 self.look_up(cx, origin, offset);
-            } else if self.bar || (p.x >= area.left() + third && p.x <= area.right() - third) {
+            } else if self.bar || !edge || !cx.page.tap_to_turn {
                 self.bar = !self.bar;
             } else {
-                self.turn(cx.library, if p.x > area.right() - third { Turn::Next } else { Turn::Previous });
+                let right = p.x > area.right() - third;
+                let forward = if cx.page.vertical { !right } else { right };
+                self.turn(cx, if forward { Turn::Next } else { Turn::Previous });
             }
         }
     }
@@ -418,7 +541,7 @@ impl ReaderScreen {
         page.glyphs.iter().find(|g| g.block == ruby.block && g.run == ruby.run).map(|g| g.offset)
     }
 
-    fn look_up(&mut self, cx: &Ctx<'_>, origin: egui::Pos2, offset: usize) {
+    fn look_up(&mut self, cx: &mut Ctx<'_>, origin: egui::Pos2, offset: usize) {
         let (block, local) = self.chapter.locate(offset);
         let Some(text) = self.chapter.blocks.get(block).and_then(Block::as_text) else { return };
         let block_start = self.chapter.block_start(block);
@@ -433,8 +556,21 @@ impl ReaderScreen {
         let Some(word) = found else { return };
         let span = block_start + word.start..block_start + word.start + word.len;
         let rect = self.span_rect(origin, span.clone());
+        if let Some(page) = self.pages.get(self.page) {
+            self.revealed.extend(page.glyphs.iter().filter(|g| span.contains(&g.offset)).map(|g| (g.block, g.run)));
+        }
         let mut popup = Popup::new(rect, span, Content::Word(word.clone()));
+        popup.vertical = cx.page.vertical;
         popup.sentence = sentence(&text.text, word.start);
+        let place = Place {
+            book: &self.meta.id,
+            book_title: &self.meta.title,
+            chapter: self.index as u32,
+            offset: popup.span.start as u32,
+            sentence: &popup.sentence,
+        };
+        cx.history.record(&word, place);
+        self.pending.lookups += 1;
         popup.state = cx.grader.and_then(|g| g.states(std::slice::from_ref(&word)).get(&word.key()).copied());
         popup.busy = self.grading.is_some();
         self.mark = Some(popup.span.clone());
@@ -588,8 +724,7 @@ impl ReaderScreen {
             .unwrap_or(egui::Rect::NOTHING)
     }
 
-    fn bars(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>) -> bool {
-        let s = cx.scheme;
+    fn bars(&mut self, ctx: &egui::Context, s: &Scheme) -> bool {
         let inset = m3::insets(ctx);
         let screen = ctx.content_rect();
         let mut close = false;
@@ -604,11 +739,16 @@ impl ReaderScreen {
                         if m3::icon_button(ui, s, ICON_ARROW_BACK, c(s.on_surface)).on_hover_text("Library").clicked() {
                             close = true;
                         }
-                        let right = 48.0;
+                        let right = 96.0;
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - right).max(40.0));
                             ui.add_space(10.0);
-                            ui.add(egui::Label::new(egui::RichText::new(&self.meta.title).font(font(text::TITLE_MEDIUM))).truncate());
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&self.meta.title).font(font(text::TITLE_MEDIUM)).color(c(s.on_surface)),
+                                )
+                                .truncate(),
+                            );
                             ui.add(
                                 egui::Label::new(
                                     egui::RichText::new(&self.chapter.title).font(font(text::BODY_SMALL)).color(c(s.on_surface_variant)),
@@ -616,6 +756,9 @@ impl ReaderScreen {
                                 .truncate(),
                             );
                         });
+                        if m3::icon_button(ui, s, ICON_TEXT_FIELDS, c(s.on_surface)).on_hover_text("Page").clicked() {
+                            self.sheet = true;
+                        }
                         if m3::icon_button(ui, s, ICON_LIST, c(s.on_surface)).on_hover_text("Chapters").clicked() {
                             self.chapters = true;
                             self.scroll_to_current = true;
@@ -649,15 +792,18 @@ impl ReaderScreen {
         close
     }
 
-    fn chapter_list(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>) -> Option<usize> {
-        let s = cx.scheme;
+    fn chapter_list(&mut self, ctx: &egui::Context, s: &Scheme) -> Option<usize> {
         let mut picked = None;
-        let modal = egui::Modal::new(egui::Id::new("chapters")).show(ctx, |ui| {
+        let frame = egui::Frame::new().fill(c(s.surface_container_high)).corner_radius(28).inner_margin(egui::Margin::same(16));
+        let modal = egui::Modal::new(egui::Id::new("chapters")).frame(frame).show(ctx, |ui| {
             let screen = ctx.content_rect();
             ui.set_width(400.0_f32.min(screen.width() - 48.0));
-            ui.label(egui::RichText::new("Chapters").font(font(text::HEADLINE_SMALL)));
+            ui.label(egui::RichText::new("Chapters").font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
             ui.add_space(8.0);
-            egui::ScrollArea::vertical().max_height(screen.height() * 0.7).show(ui, |ui| {
+            // A fixed height: left to itself the list measured one row on the first frame and kept it.
+            let rows = self.meta.chapters.len() as f32 * (56.0 + ui.spacing().item_spacing.y);
+            let height = rows.min(screen.height() * 0.7);
+            egui::ScrollArea::vertical().auto_shrink([false, false]).min_scrolled_height(height).max_height(height).show(ui, |ui| {
                 for (i, ch) in self.meta.chapters.iter().enumerate() {
                     let title = if ch.title.trim().is_empty() { format!("Chapter {}", i + 1) } else { ch.title.clone() };
                     let percent = (self.meta.fraction_at(i, 0) * 100.0).floor();
@@ -690,12 +836,31 @@ fn sentence(text: &str, at: usize) -> String {
     chars[start..end].iter().collect::<String>().trim().to_owned()
 }
 
-// One box per line a span of the chapter covers on this page.
-fn line_boxes(page: &Page, origin: egui::Pos2, span: &Range<usize>) -> Vec<egui::Rect> {
+// Under a line of text; left of a column, as its furigana is on the right.
+fn underline(painter: &egui::Painter, line: egui::Rect, vertical: bool, thickness: f32, colour: egui::Color32) {
+    let stroke = egui::Stroke::new(thickness, colour);
+    if vertical {
+        let x = line.left() - thickness;
+        painter.line_segment([pos2(x, line.top()), pos2(x, line.bottom())], stroke);
+    } else {
+        let y = line.bottom() + thickness;
+        painter.line_segment([pos2(line.left(), y), pos2(line.right(), y)], stroke);
+    }
+}
+
+// One box per line (or column) a span of the chapter covers on this page.
+fn line_boxes(page: &Page, origin: egui::Pos2, span: &Range<usize>, vertical: bool) -> Vec<egui::Rect> {
     let mut lines: Vec<egui::Rect> = Vec::new();
+    let same = |a: egui::Rect, b: egui::Rect| {
+        if vertical {
+            (a.center().x - b.center().x).abs() < b.width() / 2.0
+        } else {
+            (a.center().y - b.center().y).abs() < b.height() / 2.0
+        }
+    };
     for r in page.glyphs.iter().filter(|g| span.contains(&g.offset)).map(|g| to_screen(origin, &g.rect)) {
         match lines.last_mut() {
-            Some(line) if (line.center().y - r.center().y).abs() < r.height() / 2.0 => *line = line.union(r),
+            Some(line) if same(*line, r) => *line = line.union(r),
             _ => lines.push(r),
         }
     }

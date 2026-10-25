@@ -229,6 +229,10 @@ impl Platform for Android {
         .is_some()
     }
 
+    fn keep_screen_on(&self, on: bool) {
+        self.with_activity("keepScreenOn", |env, a| env.call_method(a, "keepScreenOn", "(Z)V", &[on.into()]).map(|_| ()));
+    }
+
     fn secret(&self, name: &str) -> Option<String> {
         self.with_activity("secret", |env, a| {
             let name = env.new_string(name)?;

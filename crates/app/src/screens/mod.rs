@@ -5,13 +5,17 @@ use std::sync::Arc;
 
 use rubiyomi_core::finder::Finder;
 use rubiyomi_core::grade::Grader;
+use rubiyomi_core::history::History;
 use rubiyomi_core::library::Library;
 use rubiyomi_core::platform::Platform;
+use rubiyomi_core::settings::PageSettings;
+use rubiyomi_core::stats::Stats;
 use rubiyomi_core::theme::Scheme;
 
 use crate::ui::m3::Snackbar;
 
 pub mod library;
+pub mod page_form;
 pub mod reader;
 pub mod reviews_form;
 pub mod settings;
@@ -27,6 +31,9 @@ pub struct Ctx<'a> {
     pub finder: Result<&'a Arc<Finder>, &'a str>,
     pub grader: Option<&'a Arc<dyn Grader>>,
     pub generation: u64,
+    pub page: &'a mut PageSettings,
+    pub history: &'a mut History,
+    pub stats: &'a mut Stats,
 }
 
 fn surface(s: &Scheme) -> egui::Frame {

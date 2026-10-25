@@ -43,6 +43,7 @@ pub struct Popup {
     pub state: Option<CardState>,
     pub busy: bool,
     pub message: Option<String>,
+    pub vertical: bool,
     // The card's other face: what can be done with the word.
     options: bool,
     // Unknown until the card has been laid out once; until then it is drawn invisibly.
@@ -63,6 +64,16 @@ fn place(screen: Rect, card: Vec2, anchor: Rect) -> Pos2 {
         y = anchor.top() - GAP - card.y;
     }
     pos2(x, y.clamp(screen.top() + GAP, (screen.bottom() - card.y - GAP).max(screen.top() + GAP)))
+}
+
+// Columns are read right to left, so the card goes to the left of the word's column.
+fn place_beside(screen: Rect, card: Vec2, anchor: Rect) -> Pos2 {
+    let mut x = anchor.left() - GAP - card.x;
+    if x < screen.left() + GAP {
+        x = anchor.right() + GAP;
+    }
+    let x = x.clamp(screen.left() + GAP, (screen.right() - card.x - GAP).max(screen.left() + GAP));
+    pos2(x, anchor.top().clamp(screen.top() + GAP, (screen.bottom() - card.y - GAP).max(screen.top() + GAP)))
 }
 
 // Whatever the grade, its button takes the colour of the state it leads to.
@@ -90,6 +101,7 @@ impl Popup {
             state: None,
             busy: false,
             message: None,
+            vertical: false,
             options: false,
             size: None,
             shown_at: None,
@@ -99,7 +111,8 @@ impl Popup {
     pub fn ui(&mut self, ctx: &egui::Context, s: &Scheme, grader: Option<&dyn Grader>) -> Option<Action> {
         let screen = ctx.content_rect();
         let width = width_for(screen.width()).min(screen.width());
-        let at = place(screen, self.size.unwrap_or(vec2(width, 0.0)), self.anchor);
+        let card = self.size.unwrap_or(vec2(width, 0.0));
+        let at = if self.vertical { place_beside(screen, card, self.anchor) } else { place(screen, card, self.anchor) };
         let now = ctx.input(|i| i.time);
         let opacity = match (self.size, self.shown_at) {
             (None, _) => 0.0,
@@ -112,7 +125,7 @@ impl Popup {
         if opacity < 1.0 {
             ctx.request_repaint();
         }
-        let dark = ctx.theme() == egui::Theme::Dark;
+        let dark = s.dark;
         let mut action = None;
         let response = egui::Area::new(egui::Id::new("word-popup")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
             egui::Frame::new()

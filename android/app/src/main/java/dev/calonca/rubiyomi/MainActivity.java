@@ -195,6 +195,16 @@ public class MainActivity extends NativeActivity {
         return text == null ? null : text.toString();
     }
 
+    public void keepScreenOn(boolean on) {
+        runOnUiThread(() -> {
+            if (on) {
+                getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            } else {
+                getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            }
+        });
+    }
+
     public void copyText(String text) {
         runOnUiThread(() -> {
             android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);

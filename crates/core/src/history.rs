@@ -24,6 +24,9 @@ pub struct Looked {
     pub book_title: String,
     pub chapter: u32,
     pub offset: u32,
+    // As written in the book, which can be longer than the dictionary form.
+    #[serde(default)]
+    pub len: u32,
     pub first: u64,
     pub last: u64,
     pub count: u32,
@@ -85,6 +88,7 @@ impl History {
                 book_title: String::new(),
                 chapter: 0,
                 offset: 0,
+                len: 0,
                 first: time,
                 last: time,
                 count: 0,
@@ -95,6 +99,7 @@ impl History {
         entry.book_title = at.book_title.to_owned();
         entry.chapter = at.chapter;
         entry.offset = at.offset;
+        entry.len = word.len as u32;
         entry.last = time;
         entry.count += 1;
         self.items.insert(0, entry);

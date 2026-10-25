@@ -2,12 +2,10 @@
 // Copyright (C) 2026 Alessandro La Conca
 
 use egui::RichText;
-use egui_material_icons::icons::{
-    ICON_AUTO_STORIES, ICON_DESCRIPTION, ICON_DICTIONARY, ICON_GAVEL, ICON_INFO, ICON_PALETTE, ICON_SCHOOL, ICON_TRANSLATE,
-};
+use egui_material_icons::icons::{ICON_AUTO_STORIES, ICON_DESCRIPTION, ICON_DICTIONARY, ICON_GAVEL, ICON_INFO, ICON_SCHOOL};
 use rubiyomi_core::dict::DictVersion;
 use rubiyomi_core::platform::Platform;
-use rubiyomi_core::settings::ReviewSource;
+use rubiyomi_core::settings::{PageSettings, ReviewSource};
 use rubiyomi_core::theme::Scheme;
 
 use super::reviews_form::{ReviewsForm, hint};
@@ -24,6 +22,7 @@ enum Page {
     Dictionary,
     WordFinder,
     Reviews,
+    Reading,
 }
 
 #[derive(Default)]
@@ -36,20 +35,33 @@ impl SettingsScreen {
     pub fn back(&mut self) -> bool {
         self.page = match self.page {
             Page::Main => return false,
-            Page::Reviews => Page::Main,
+            Page::Reviews | Page::Reading => Page::Main,
             Page::About => Page::Main,
             Page::Dictionary | Page::WordFinder => Page::About,
         };
         true
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform, reviews: &mut Reviews, dict: Option<DictVersion>) {
+    // Says whether the page settings changed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        s: &Scheme,
+        platform: &dyn Platform,
+        reviews: &mut Reviews,
+        dict: Option<DictVersion>,
+        page: &mut PageSettings,
+        colours_matter: bool,
+    ) -> bool {
+        let mut changed = false;
         let title = match self.page {
             Page::Main => "Settings",
             Page::About => "About",
             Page::Dictionary => "Dictionary",
             Page::WordFinder => "Word finder",
             Page::Reviews => "Reviews",
+            Page::Reading => "Page",
         };
         if m3::top_app_bar(ui, s, title, self.page != Page::Main) {
             self.back();
@@ -58,6 +70,7 @@ impl SettingsScreen {
             egui::ScrollArea::vertical().show(ui, |ui| match self.page {
                 Page::Main => self.main(ui, s, reviews),
                 Page::Reviews => self.reviews(ui, s, platform, reviews),
+                Page::Reading => changed = super::page_form::ui(ui, s, page, colours_matter),
                 Page::About => self.about(ui, s, dict.as_ref()),
                 Page::Dictionary => dictionary(ui, s, dict.as_ref()),
                 Page::WordFinder => prose(ui, |ui| {
@@ -71,12 +84,14 @@ impl SettingsScreen {
                 }),
             });
         });
+        changed
     }
 
     fn main(&mut self, ui: &mut egui::Ui, s: &Scheme, reviews: &Reviews) {
         m3::section_header(ui, s, "Reading");
-        m3::list_item(ui, s, ICON_AUTO_STORIES, "Page", "Font size, line spacing, vertical or horizontal text", false);
-        m3::list_item(ui, s, ICON_TRANSLATE, "Parsing", "How words are found in the text", false);
+        if m3::list_item(ui, s, ICON_AUTO_STORIES, "Page", "Theme, text size, furigana, vertical text", true).clicked() {
+            self.page = Page::Reading;
+        }
         m3::section_header(ui, s, "Words");
         if m3::list_item(ui, s, ICON_DICTIONARY, "Dictionary", "JMdict, English, on this device", true).clicked() {
             self.page = Page::Dictionary;
@@ -86,7 +101,6 @@ impl SettingsScreen {
             self.page = Page::Reviews;
         }
         m3::section_header(ui, s, "App");
-        m3::list_item(ui, s, ICON_PALETTE, "Appearance", "Colours and theme", false);
         if m3::list_item(ui, s, ICON_INFO, "About", concat!("Rubiyomi ", env!("CARGO_PKG_VERSION"), " · dictionary and licences"), true)
             .clicked()
         {

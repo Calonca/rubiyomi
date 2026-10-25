@@ -116,7 +116,7 @@ impl LibraryScreen {
                     c(s.on_surface_variant),
                 );
                 if response.clicked() {
-                    match ReaderScreen::open(cx.library, meta.clone()) {
+                    match ReaderScreen::open(cx.library, meta.clone(), None) {
                         Ok(reader) => open = Some(reader),
                         Err(e) => cx.snackbar.show(ui.ctx(), e),
                     }

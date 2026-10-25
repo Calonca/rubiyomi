@@ -3,3 +3,4 @@
 
 pub mod fonts;
 pub mod m3;
+pub mod page;
