@@ -226,7 +226,7 @@ impl ReviewsForm {
                 Vec::new()
             }
             None => {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.spinner();
                     hint(ui, s, &format!("Looking in {deck}…"));
                 });
@@ -342,31 +342,28 @@ fn fits(m: &AnkiMapping, fields: &[String]) -> bool {
 
 fn field_row(ui: &mut egui::Ui, s: &Scheme, m: &mut AnkiMapping, field: &str, sample: Option<&str>) {
     let role = roles_of(m).iter().position(|r| r.as_str() == field);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(field).font(font(text::TITLE_MEDIUM)).color(c(s.on_surface)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let shown = role.map_or("Nothing", |r| ROLES[r]);
-            egui::ComboBox::from_id_salt(("anki-role", field)).selected_text(RichText::new(shown).font(font(text::BODY_LARGE))).show_ui(
-                ui,
-                |ui| {
-                    for (r, name) in ROLES.iter().enumerate() {
-                        if ui.selectable_label(role == Some(r), *name).clicked() {
-                            let slots = roles_of(m);
-                            if let Some(old) = role {
-                                slots[old].clear();
-                            }
-                            *slots[r] = field.to_owned();
-                        }
+    // The name on its own line, so a long one wraps instead of widening the form.
+    ui.add(egui::Label::new(RichText::new(field).font(font(text::TITLE_MEDIUM)).color(c(s.on_surface))).wrap());
+    let shown = role.map_or("Nothing", |r| ROLES[r]);
+    egui::ComboBox::from_id_salt(("anki-role", field))
+        .width(160.0_f32.min(ui.available_width()))
+        .selected_text(RichText::new(shown).font(font(text::BODY_LARGE)))
+        .show_ui(ui, |ui| {
+            for (r, name) in ROLES.iter().enumerate() {
+                if ui.selectable_label(role == Some(r), *name).clicked() {
+                    let slots = roles_of(m);
+                    if let Some(old) = role {
+                        slots[old].clear();
                     }
-                    if ui.selectable_label(role.is_none(), "Nothing").clicked()
-                        && let Some(old) = role
-                    {
-                        roles_of(m)[old].clear();
-                    }
-                },
-            );
+                    *slots[r] = field.to_owned();
+                }
+            }
+            if ui.selectable_label(role.is_none(), "Nothing").clicked()
+                && let Some(old) = role
+            {
+                roles_of(m)[old].clear();
+            }
         });
-    });
     let ink = c(s.on_surface);
     match role {
         Some(3) => {
@@ -378,11 +375,14 @@ fn field_row(ui: &mut egui::Ui, s: &Scheme, m: &mut AnkiMapping, field: &str, sa
             job.append("毎晩、本を", 0.0, plain.clone());
             job.append("読み", 0.0, strong);
             job.append("ながら眠った。", 0.0, plain);
-            ui.label(job);
+            ui.add(egui::Label::new(job).wrap());
         }
         Some(r) => {
             let value = ["読み", "よみ", "reading · pronunciation (of a kanji)"][r];
-            ui.label(RichText::new(value).font(font(if r == 0 { text::TITLE_LARGE } else { text::BODY_LARGE })).color(ink));
+            ui.add(
+                egui::Label::new(RichText::new(value).font(font(if r == 0 { text::TITLE_LARGE } else { text::BODY_LARGE })).color(ink))
+                    .wrap(),
+            );
         }
         None => hint(ui, s, "Left empty"),
     }
@@ -404,10 +404,13 @@ fn labelled_combo(ui: &mut egui::Ui, id: &str, value: &mut String, options: &[(S
         .iter()
         .find(|(o, _)| o == value)
         .map_or_else(|| if value.is_empty() { none.to_owned() } else { value.clone() }, |(_, l)| l.clone());
+    // Anki deck names run long, as 日本語::jpdb::Mining does: they wrap rather than run off the screen.
     egui::ComboBox::from_id_salt(id)
-        .width(ui.available_width().min(360.0))
+        .width(ui.available_width())
+        .wrap()
         .selected_text(RichText::new(shown).font(font(text::BODY_LARGE)))
         .show_ui(ui, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             for (o, l) in options.iter().filter(|(o, _)| !o.is_empty()) {
                 if ui.selectable_label(value == o, l).clicked() {
                     *value = o.clone();
