@@ -120,7 +120,7 @@ impl Builder {
     }
 
     fn line_break(&mut self) {
-        if self.skip_depth > 0 || self.rt.is_some() || self.text.is_empty() {
+        if self.skip_depth > 0 || self.rt.is_some() {
             return;
         }
         self.space = None;
@@ -130,7 +130,14 @@ impl Builder {
 
     fn flush(&mut self) {
         self.space = None;
-        while self.text.ends_with(|c: char| c.is_ascii_whitespace()) {
+        while self.text.ends_with(|c: char| c.is_ascii_whitespace() && c != '\n') {
+            self.text.pop();
+            self.chars -= 1;
+        }
+        // As a browser has it: a <br> ending a block adds no line, unless the block is
+        // nothing else, as <p><br/></p> is, which books use for an empty line.
+        let blank = self.text.ends_with('\n');
+        if blank {
             self.text.pop();
             self.chars -= 1;
         }
@@ -140,7 +147,7 @@ impl Builder {
         let ruby = std::mem::take(&mut self.ruby);
         self.chars = 0;
         self.base_start = 0;
-        if text.chars().all(|c| c.is_whitespace()) {
+        if !blank && text.chars().all(|c| c.is_whitespace()) {
             return;
         }
         let heading = self.heading_depth > 0;

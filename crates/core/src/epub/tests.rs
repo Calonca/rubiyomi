@@ -66,3 +66,13 @@ fn hostile_hrefs_stay_inside_the_book() {
         assert!(!name.contains('/') && name != ".." && name != ".", "{path} -> {name}");
     }
 }
+
+#[test]
+fn empty_lines_made_with_br_stay() {
+    let body = format!("<p>{}</p><p><br/></p><p><br/>{}<br/></p>", RASHOMON[0], RASHOMON[1]);
+    let book = open_bytes(EpubBuilder::new().title("羅生門").chapter("一", &body).build()).unwrap();
+    let texts: Vec<String> = book.chapters[0].blocks.iter().filter_map(Block::as_text).map(|t| t.text.clone()).collect();
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert_eq!(texts[1], "", "<p><br/></p> is an empty line");
+    assert!(texts[2].starts_with('\n') && !texts[2].ends_with('\n'), "{:?}", texts[2]);
+}

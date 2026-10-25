@@ -12,7 +12,7 @@ use crate::epub::{self, EpubError};
 use crate::text::Chapter;
 use fsutil::{now, read_json, read_json_or_default, write_atomic, write_json};
 
-pub const EXTRACT_VERSION: u32 = 1;
+pub const EXTRACT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
