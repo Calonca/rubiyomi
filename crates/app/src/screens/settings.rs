@@ -37,6 +37,8 @@ pub struct SettingsScreen {
     page: Page,
     form: ReviewsForm,
     leaving: Option<Leave>,
+    // The pass the dialog first showed in: the tap that opened it isn't one that closes it.
+    leave_shown: Option<u64>,
     // A tab to go to once the dialog is answered, for the app to take.
     go_to: Option<usize>,
 }
@@ -152,6 +154,8 @@ impl SettingsScreen {
 
     fn leave_dialog(&mut self, ctx: &egui::Context, s: &Scheme, platform: &dyn Platform, reviews: &mut Reviews) {
         let mut answer = None;
+        let pass = ctx.cumulative_pass_nr();
+        let opened_now = *self.leave_shown.get_or_insert(pass) == pass;
         let modal = egui::Modal::new(egui::Id::new("unsaved-reviews")).show(ctx, |ui| {
             ui.set_width(320.0_f32.min(ctx.content_rect().width() - 48.0));
             ui.label(RichText::new("Save changes?").font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
@@ -174,10 +178,14 @@ impl SettingsScreen {
                 }
             });
         });
-        if modal.should_close() {
+        if modal.should_close() && !opened_now {
             self.leaving = None;
         }
+        if self.leaving.is_none() {
+            self.leave_shown = None;
+        }
         let (Some(save), Some(to)) = (answer, self.leaving.take()) else { return };
+        self.leave_shown = None;
         if save {
             reviews.apply(ctx, platform, self.form.draft.clone());
         } else {
