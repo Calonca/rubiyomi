@@ -4,8 +4,9 @@ Rust + egui reader for Japanese books, Linux and Android.
 
 ## Layout
 
-- `crates/core` — no egui, no JNI: platform trait, colour schemes. Unit tests
-  live next to the code.
+- `crates/core` — no egui, no JNI: EPUB, library store, layout, platform trait,
+  colour schemes. Unit tests live next to the code; test EPUBs are built in
+  code (`testing.rs`).
 - `crates/app` — egui UI, desktop binary and Android cdylib.
 - `android/` — Gradle project; `MainActivity` extends NativeActivity.
 - `art/` — the icon source (`icon.svg`) and the 512 px store icon.

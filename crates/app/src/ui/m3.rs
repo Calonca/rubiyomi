@@ -196,3 +196,105 @@ pub fn list_item(ui: &mut Ui, s: &Scheme, icon: MaterialIcon, headline: &str, su
     p.galley(pos2(x, top + head_height), sub, c(s.on_surface_variant));
     response
 }
+
+pub fn state_layer(response: &Response) -> f32 {
+    if response.is_pointer_button_down_on() {
+        0.12
+    } else if response.hovered() {
+        0.08
+    } else {
+        0.0
+    }
+}
+
+pub fn icon_button(ui: &mut Ui, s: &Scheme, icon: MaterialIcon, color: Color32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::click());
+    let layer = state_layer(&response);
+    if layer > 0.0 {
+        ui.painter().circle_filled(rect.center(), 20.0, alpha(c(s.on_surface), layer));
+    }
+    paint_icon(ui, icon, rect.center(), 24.0, color);
+    response
+}
+
+pub fn fab(ui: &mut Ui, s: &Scheme, icon: MaterialIcon, label: &str) -> Response {
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font(text::LABEL_LARGE), c(s.on_primary_container));
+    let size = vec2(16.0 + 24.0 + 8.0 + galley.size().x + 20.0, 56.0);
+    let area = ui.max_rect();
+    let rect = Rect::from_min_size(pos2(area.right() - 16.0 - size.x, area.bottom() - 16.0 - size.y), size);
+    let response = ui.interact(rect, ui.id().with(("fab", label)), Sense::click());
+    let p = ui.painter();
+    p.rect_filled(rect.translate(vec2(0.0, 2.0)), CornerRadius::same(16), alpha(c(s.scrim), 0.18));
+    p.rect_filled(rect, CornerRadius::same(16), blend(c(s.primary_container), c(s.on_primary_container), state_layer(&response)));
+    paint_icon(ui, icon, pos2(rect.left() + 16.0 + 12.0, rect.center().y), 24.0, c(s.on_primary_container));
+    p.galley(pos2(rect.left() + 48.0, rect.center().y - galley.size().y / 2.0), galley, c(s.on_primary_container));
+    response
+}
+
+pub fn text_button(ui: &mut Ui, s: &Scheme, label: &str) -> Response {
+    let ink = c(s.primary);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font(text::LABEL_LARGE), ink);
+    let (rect, response) = ui.allocate_exact_size(vec2(galley.size().x + 24.0, 40.0), Sense::click());
+    ui.painter().rect_filled(rect, CornerRadius::same(20), alpha(ink, state_layer(&response)));
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, ink);
+    response
+}
+
+pub fn row(ui: &mut Ui, s: &Scheme, headline: &str, supporting: &str, selected: bool) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 56.0), Sense::click());
+    let base = if selected { alpha(c(s.secondary_container), 1.0) } else { Color32::TRANSPARENT };
+    ui.painter().rect_filled(rect, CornerRadius::same(28), base);
+    let layer = state_layer(&response);
+    if layer > 0.0 {
+        ui.painter().rect_filled(rect, CornerRadius::same(28), alpha(c(s.on_surface), layer));
+    }
+    let ink = if selected { c(s.on_secondary_container) } else { c(s.on_surface) };
+    let right = ui.painter().layout_no_wrap(supporting.to_owned(), font(text::LABEL_MEDIUM), c(s.on_surface_variant));
+    let wrap = (rect.width() - 48.0 - right.size().x).max(40.0);
+    let mut job = egui::text::LayoutJob::simple_singleline(headline.to_owned(), font(text::LABEL_LARGE), ink);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(wrap);
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(pos2(rect.left() + 16.0, rect.center().y - galley.size().y / 2.0), galley, ink);
+    ui.painter().galley(pos2(rect.right() - 16.0 - right.size().x, rect.center().y - right.size().y / 2.0), right, c(s.on_surface_variant));
+    response
+}
+
+#[derive(Default)]
+pub struct Snackbar {
+    message: Option<(String, f64)>,
+}
+
+impl Snackbar {
+    pub fn show(&mut self, ctx: &egui::Context, message: impl Into<String>) {
+        let until = ctx.input(|i| i.time) + 4.0;
+        self.message = Some((message.into(), until));
+        ctx.request_repaint();
+    }
+
+    pub fn ui(&mut self, ctx: &egui::Context, s: &Scheme, lift: f32) {
+        let now = ctx.input(|i| i.time);
+        let Some((message, until)) = &self.message else { return };
+        if now > *until {
+            self.message = None;
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(until - now));
+        let inset = insets(ctx);
+        let screen = ctx.content_rect();
+        let width = (screen.width() - 32.0).min(560.0);
+        egui::Area::new(egui::Id::new("snackbar"))
+            .order(egui::Order::Foreground)
+            .pivot(Align2::CENTER_BOTTOM)
+            .fixed_pos(pos2(screen.center().x, screen.bottom() - inset.bottom as f32 - 16.0 - lift))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(c(s.inverse_surface))
+                    .corner_radius(CornerRadius::same(4))
+                    .inner_margin(Margin::symmetric(16, 14))
+                    .show(ui, |ui| {
+                        ui.set_width(width - 32.0);
+                        ui.label(egui::RichText::new(message.as_str()).font(font(text::BODY_MEDIUM)).color(c(s.inverse_on_surface)));
+                    });
+            });
+    }
+}

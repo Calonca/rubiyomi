@@ -1,21 +1,27 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use jni::JNIEnv;
-use jni::objects::{JIntArray, JObject};
-use rubiyomi_core::platform::{Insets, Platform};
+use jni::objects::{JIntArray, JObject, JString};
+use rubiyomi_core::platform::{Insets, Platform, PlatformEvent};
 use winit::platform::android::activity::AndroidApp;
+
+use super::EventQueue;
 
 pub struct Android {
     app: AndroidApp,
+    queue: Arc<EventQueue>,
 }
 
 impl Android {
     pub fn new(app: AndroidApp) -> Arc<Self> {
-        Arc::new(Android { app })
+        let me = Arc::new(Android { app, queue: Arc::new(EventQueue::default()) });
+        me.watch_events();
+        me
     }
 
     fn with_activity<T>(&self, what: &str, f: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> jni::errors::Result<T>) -> Option<T> {
@@ -36,6 +42,31 @@ impl Android {
         }
     }
 
+    fn watch_events(self: &Arc<Self>) {
+        let me = Arc::downgrade(self);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(300));
+                let Some(me) = me.upgrade() else { return };
+                while let Some(line) = me
+                    .with_activity("pollEvent", |env, a| {
+                        let v = env.call_method(a, "pollEvent", "()Ljava/lang/String;", &[])?.l()?;
+                        if v.is_null() {
+                            return Ok(None);
+                        }
+                        let s: String = env.get_string(&JString::from(v))?.into();
+                        Ok(Some(s))
+                    })
+                    .flatten()
+                {
+                    if let Some(event) = parse_event(&line) {
+                        me.queue.push(event);
+                    }
+                }
+            }
+        });
+    }
+
     pub fn exit_when_finishing(self: &Arc<Self>) {
         let me = Arc::downgrade(self);
         std::thread::spawn(move || {
@@ -51,7 +82,29 @@ impl Android {
     }
 }
 
+fn parse_event(line: &str) -> Option<PlatformEvent> {
+    let mut fields = line.split('\t');
+    match fields.next()? {
+        "imported" => {
+            let path = PathBuf::from(fields.next()?);
+            let name = fields.next().unwrap_or("").to_owned();
+            Some(PlatformEvent::Imported { path, name, temporary: true })
+        }
+        "import-failed" => Some(PlatformEvent::ImportFailed(fields.next().unwrap_or("unknown error").to_owned())),
+        other => {
+            log::warn!("unknown event from Java: {other}");
+            None
+        }
+    }
+}
+
 impl Platform for Android {
+    fn data_dir(&self) -> PathBuf {
+        let dir = self.app.internal_data_path().unwrap_or_else(std::env::temp_dir);
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
     fn dark_mode(&self) -> Option<bool> {
         self.with_activity("darkMode", |env, a| env.call_method(a, "darkMode", "()Z", &[])?.z())
     }
@@ -59,6 +112,18 @@ impl Platform for Android {
     fn accent_color(&self) -> Option<u32> {
         let c = self.with_activity("accentColor", |env, a| env.call_method(a, "accentColor", "()I", &[])?.i())?;
         (c >= 0).then_some(c as u32)
+    }
+
+    fn pick_epub(&self) {
+        self.with_activity("pickEpub", |env, a| env.call_method(a, "pickEpub", "()V", &[]).map(|_| ()));
+    }
+
+    fn poll_events(&self) -> Vec<PlatformEvent> {
+        self.queue.drain()
+    }
+
+    fn set_waker(&self, wake: Box<dyn Fn() + Send + Sync>) {
+        self.queue.set_waker(wake);
     }
 
     fn insets(&self) -> Insets {

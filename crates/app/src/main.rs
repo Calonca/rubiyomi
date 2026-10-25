@@ -11,5 +11,6 @@ fn main() -> eframe::Result<()> {
             .with_min_inner_size([360.0, 480.0]),
         ..Default::default()
     };
-    rubiyomi::run(options, std::sync::Arc::new(rubiyomi::platform::desktop::Desktop))
+    let desktop = rubiyomi::platform::desktop::Desktop::with_files(std::env::args_os().skip(1).map(Into::into));
+    rubiyomi::run(options, std::sync::Arc::new(desktop))
 }

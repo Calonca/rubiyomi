@@ -8,6 +8,7 @@ use rubiyomi_core::platform::Platform;
 pub mod app;
 pub mod platform;
 pub mod screens;
+pub mod task;
 pub mod ui;
 
 pub fn run(options: eframe::NativeOptions, platform: Arc<dyn Platform>) -> eframe::Result<()> {
