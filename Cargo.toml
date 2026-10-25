@@ -4,7 +4,7 @@ members = ["crates/core", "crates/app", "xtask"]
 default-members = ["crates/app"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 license = "MIT"
 authors = ["Alessandro La Conca"]

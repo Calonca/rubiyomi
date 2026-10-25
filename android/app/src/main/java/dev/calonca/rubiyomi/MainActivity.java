@@ -168,28 +168,16 @@ public class MainActivity extends NativeActivity {
         return mode == Configuration.UI_MODE_NIGHT_YES;
     }
 
-    // The app draws under the bars and the cutout; Rust keeps clear of them with these.
+    // The app draws under the cutout, which Rust keeps clear of with these. The bars are
+    // left out: they are hidden, and show only for a moment over the app, as they do on the
+    // way to the recents, which would otherwise lay the page out again each time.
     public int[] insets() {
         WindowInsets insets = getWindow().getDecorView().getRootWindowInsets();
-        if (insets == null) {
+        if (insets == null || Build.VERSION.SDK_INT < 28 || insets.getDisplayCutout() == null) {
             return new int[] {0, 0, 0, 0};
         }
-        if (Build.VERSION.SDK_INT >= 30) {
-            android.graphics.Insets i = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-            return new int[] {i.left, i.top, i.right, i.bottom};
-        }
-        int[] out = {
-            insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
-            insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom()
-        };
-        if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
-            android.view.DisplayCutout cut = insets.getDisplayCutout();
-            out[0] = Math.max(out[0], cut.getSafeInsetLeft());
-            out[1] = Math.max(out[1], cut.getSafeInsetTop());
-            out[2] = Math.max(out[2], cut.getSafeInsetRight());
-            out[3] = Math.max(out[3], cut.getSafeInsetBottom());
-        }
-        return out;
+        android.view.DisplayCutout cut = insets.getDisplayCutout();
+        return new int[] {cut.getSafeInsetLeft(), cut.getSafeInsetTop(), cut.getSafeInsetRight(), cut.getSafeInsetBottom()};
     }
 
     public boolean openUrl(String url) {

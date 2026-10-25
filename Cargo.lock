@@ -3352,7 +3352,7 @@ dependencies = [
 
 [[package]]
 name = "rubiyomi"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "android_logger",
  "eframe",
@@ -3373,7 +3373,7 @@ dependencies = [
 
 [[package]]
 name = "rubiyomi-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "image",
@@ -4980,7 +4980,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "lindera-ipadic",
  "rubiyomi-core",

@@ -117,6 +117,10 @@ pub struct ReaderScreen {
     page: usize,
     laid_out: Option<(LayoutConfig, Typeface)>,
     want_offset: Option<usize>,
+    // What the page shown was chosen for, or the word marked on it, kept across layouts: a
+    // new size (the recents, a rotation) lays the chapter out again around it, not around
+    // the page's first character, which would land a little earlier each time.
+    anchor: Option<usize>,
     want_last: bool,
     save_after_layout: bool,
     bar: bool,
@@ -126,7 +130,8 @@ pub struct ReaderScreen {
     images: HashMap<String, egui::TextureHandle>,
     decoding: Vec<Task<(String, Option<egui::ColorImage>)>>,
     saved: (usize, usize, Option<Range<usize>>),
-    // Where the last look-up was, marked until the page turns.
+    // Where the last look-up was, marked until another one or a new chapter, so the page
+    // it is on can be found again.
     mark: Option<Range<usize>>,
     drag: egui::Vec2,
     colours: Option<Colours>,
@@ -172,7 +177,8 @@ impl ReaderScreen {
             pages: Vec::new(),
             page: 0,
             laid_out: None,
-            want_offset: Some(mark.as_ref().map_or(progress.offset as usize, |m| m.start)),
+            want_offset: Some(progress.offset as usize),
+            anchor: None,
             want_last: false,
             save_after_layout: false,
             bar: false,
@@ -223,6 +229,7 @@ impl ReaderScreen {
         self.chapter = chapter;
         self.runs = self.chapter_runs();
         self.laid_out = None;
+        self.anchor = None;
         self.page = 0;
         true
     }
@@ -243,6 +250,7 @@ impl ReaderScreen {
         let moved = match turn {
             Turn::Next if self.page + 1 < self.pages.len() => {
                 self.page += 1;
+                self.anchor = None;
                 true
             }
             Turn::Next if self.index + 1 < self.meta.chapters.len() => {
@@ -254,6 +262,7 @@ impl ReaderScreen {
             }
             Turn::Previous if self.page > 0 => {
                 self.page -= 1;
+                self.anchor = None;
                 true
             }
             Turn::Previous if self.index > 0 => {
@@ -297,7 +306,6 @@ impl ReaderScreen {
             return;
         }
         self.popup = None;
-        self.mark = None;
         self.slide = from.map(|from| Slide { from, chapter, start: self.now, forward: turn == Turn::Next, from_progress: 0.0 });
         if !self.save_after_layout {
             self.save(library);
@@ -391,7 +399,8 @@ impl ReaderScreen {
     }
 
     fn save(&mut self, library: &Library) {
-        let offset = self.want_offset.unwrap_or_else(|| self.offset());
+        // The anchor, so a page reopened at another size still holds the word marked on it.
+        let offset = self.want_offset.or(self.anchor).unwrap_or_else(|| self.offset());
         let now_at = (self.index, offset, self.mark.clone());
         if self.saved == now_at {
             return;
@@ -428,7 +437,7 @@ impl ReaderScreen {
         if self.laid_out.is_some() {
             self.popup = None;
         }
-        let keep = self.want_offset.take().or_else(|| self.laid_out.map(|_| self.offset()));
+        let keep = self.want_offset.take().or(self.anchor).or_else(|| self.laid_out.map(|_| self.offset()));
         let blocks: Vec<LayoutBlock<'_>> = self
             .chapter
             .blocks
@@ -449,12 +458,15 @@ impl ReaderScreen {
             self.pages.push(Page::default());
         }
         self.laid_out = Some((config, p.typeface));
+        let mut anchor = keep;
         if std::mem::take(&mut self.want_last) {
             self.page = self.pages.len() - 1;
+            anchor = None;
         } else if let Some(offset) = keep {
             self.page = page_for_offset(&self.pages, offset);
         }
         self.page = self.page.min(self.pages.len() - 1);
+        self.anchor = Some(anchor.unwrap_or_else(|| self.offset()));
     }
 
     fn image(&mut self, ctx: &egui::Context, library: &Library, file: &str) -> Option<egui::TextureHandle> {
@@ -845,6 +857,7 @@ impl ReaderScreen {
             popup.continue_from(old);
         }
         self.mark = Some(popup.span.clone());
+        self.anchor = Some(popup.span.start);
         self.popup = Some(popup);
         self.save(cx.library);
     }
