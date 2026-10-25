@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Alessandro La Conca
+
+pub mod anki;
+pub mod jpdb;
+
+use std::collections::HashMap;
+
+use crate::cards::{CardState, WordKey};
+use crate::finder::Word;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GradeButton {
+    pub label: &'static str,
+    pub value: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GradeError {
+    Offline,
+    Auth,
+    PermissionDenied,
+    NotFound(String),
+    RateLimited,
+    NotSetUp(String),
+    Other(String),
+}
+
+impl std::fmt::Display for GradeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GradeError::Offline => write!(f, "no connection"),
+            GradeError::Auth => write!(f, "the key was refused"),
+            GradeError::PermissionDenied => write!(f, "permission was refused"),
+            GradeError::RateLimited => write!(f, "asked to slow down"),
+            GradeError::NotFound(why) | GradeError::NotSetUp(why) | GradeError::Other(why) => f.write_str(why),
+        }
+    }
+}
+
+pub type StateMap = HashMap<WordKey, CardState>;
+
+pub trait Grader: Send + Sync {
+    fn name(&self) -> &'static str;
+
+    fn grades(&self) -> &'static [GradeButton];
+
+    fn actions(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    // Fetches what is needed to colour words without asking per word.
+    fn sync(&self) -> Result<(), GradeError>;
+
+    fn states(&self, words: &[Word]) -> StateMap;
+
+    fn grade(&self, word: &Word, value: u8, sentence: &str) -> Result<CardState, GradeError>;
+
+    fn add(&self, word: &Word, sentence: &str) -> Result<CardState, GradeError>;
+
+    fn act(&self, word: &Word, action: &str, sentence: &str) -> Result<CardState, GradeError> {
+        let _ = (word, action, sentence);
+        Err(GradeError::Other("not available".into()))
+    }
+}

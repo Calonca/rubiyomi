@@ -5,11 +5,15 @@ Rust + egui reader for Japanese books, Linux and Android.
 ## Layout
 
 - `crates/core` — no egui, no JNI: EPUB, library store, layout, dictionaries
-  (JMdict index, unpacking), word finder (lindera), platform trait, colour
-  schemes. Unit tests live next to the code; test EPUBs are built in
+  (JMdict index, unpacking), word finder (lindera), reviews (jpdb.io and
+  AnkiConnect clients, graders, card states), settings, platform trait,
+  colour schemes. HTTP goes through `http::Transport`, so tests answer with
+  hand-written JSON. Unit tests live next to the code; test EPUBs are built in
   code (`testing.rs`).
 - `crates/app` — egui UI, desktop binary and Android cdylib.
 - `android/` — Gradle project; `MainActivity` extends NativeActivity.
+  `AnkiDroidBridge` talks to AnkiDroid; `Secrets` keeps keys encrypted with
+  the Android Keystore (desktop: the Secret Service, through keyring-core).
 - `xtask` — `cargo xtask dict` builds the bundled dictionaries into
   `dist/dict/` (JMdict release pinned with its checksum in `xtask/src/main.rs`;
   bump it to the newest jmdict-simplified English release before each

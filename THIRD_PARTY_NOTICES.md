@@ -131,6 +131,14 @@ Material Color Utilities (Apache-2.0,
 its Rust port `material-colors` (MIT OR Apache-2.0,
 <https://github.com/Aiving/material-colors>).
 
+## Root certificates (jpdb.io connection)
+
+HTTPS to jpdb.io is checked against Mozilla's list of root certificates,
+bundled through the `webpki-roots` crate (CDLA-Permissive-2.0,
+<https://github.com/rustls/webpki-roots>; the list itself comes from
+Mozilla's CA Certificate Program through the Common CA Database,
+<https://www.ccadb.org/>).
+
 ## egui default fonts
 
 egui's built-in fonts are included through `epaint_default_fonts`:

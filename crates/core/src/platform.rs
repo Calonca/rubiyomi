@@ -4,10 +4,13 @@
 use std::io::Read;
 use std::path::PathBuf;
 
+use crate::grade::anki::AnkiBackend;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlatformEvent {
     Imported { path: PathBuf, name: String, temporary: bool },
     ImportFailed(String),
+    Permission { granted: bool },
 }
 
 pub type Insets = [f32; 4];
@@ -34,4 +37,26 @@ pub trait Platform: Send + Sync {
     fn open_url(&self, url: &str) -> bool;
 
     fn to_background(&self) -> bool;
+
+    fn anki_droid(&self) -> Option<Box<dyn AnkiBackend>> {
+        None
+    }
+
+    // Installed, and allowed: None where there is no AnkiDroid to ask.
+    fn anki_droid_status(&self) -> Option<(bool, bool)> {
+        None
+    }
+
+    fn request_anki_permission(&self) {}
+
+    // Keys go to the system's own store, never into our files. An empty value forgets one.
+    fn secret(&self, name: &str) -> Option<String> {
+        let _ = name;
+        None
+    }
+
+    fn set_secret(&self, name: &str, value: &str) -> Result<(), String> {
+        let _ = (name, value);
+        Err("there is no safe place for keys here".into())
+    }
 }

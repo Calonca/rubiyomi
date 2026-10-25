@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
+use std::sync::Arc;
+
 use rubiyomi_core::finder::Finder;
+use rubiyomi_core::grade::Grader;
 use rubiyomi_core::library::Library;
 use rubiyomi_core::platform::Platform;
 use rubiyomi_core::theme::Scheme;
@@ -19,7 +22,9 @@ pub struct Ctx<'a> {
     pub platform: &'a dyn Platform,
     pub library: &'a Library,
     pub snackbar: &'a mut Snackbar,
-    pub finder: Result<&'a Finder, &'a str>,
+    pub finder: Result<&'a Arc<Finder>, &'a str>,
+    pub grader: Option<&'a Arc<dyn Grader>>,
+    pub generation: u64,
 }
 
 fn surface(s: &Scheme) -> egui::Frame {

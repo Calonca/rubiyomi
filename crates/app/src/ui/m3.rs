@@ -308,3 +308,48 @@ impl Snackbar {
             });
     }
 }
+
+pub fn filled_button(ui: &mut Ui, s: &Scheme, label: &str) -> Response {
+    let ink = c(s.on_primary);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font(text::LABEL_LARGE), ink);
+    let (rect, response) = ui.allocate_exact_size(vec2(galley.size().x + 48.0, 40.0), Sense::click());
+    ui.painter().rect_filled(rect, CornerRadius::same(20), blend(c(s.primary), ink, state_layer(&response)));
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, ink);
+    response
+}
+
+pub fn segmented(ui: &mut Ui, s: &Scheme, options: &[&str], selected: &mut usize) -> bool {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
+    let base = ui.id().with(("segmented", rect.min.x.to_bits(), rect.min.y.to_bits()));
+    let n = options.len().max(1);
+    let w = rect.width() / n as f32;
+    let mut changed = false;
+    ui.painter().rect_stroke(rect, CornerRadius::same(20), Stroke::new(1.0, c(s.outline)), egui::StrokeKind::Inside);
+    for (i, label) in options.iter().enumerate() {
+        let cell = Rect::from_min_size(pos2(rect.left() + w * i as f32, rect.top()), vec2(w, rect.height()));
+        let response = ui.interact(cell, base.with(i), Sense::click());
+        let on = *selected == i;
+        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, *label));
+        let radius = match (i, n) {
+            (_, 1) => CornerRadius::same(20),
+            (0, _) => CornerRadius { nw: 20, sw: 20, ne: 0, se: 0 },
+            (k, n) if k == n - 1 => CornerRadius { nw: 0, sw: 0, ne: 20, se: 20 },
+            _ => CornerRadius::ZERO,
+        };
+        if on {
+            ui.painter().rect_filled(cell, radius, c(s.secondary_container));
+        } else {
+            ui.painter().rect_filled(cell, radius, alpha(c(s.on_surface), state_layer(&response)));
+        }
+        if i > 0 {
+            ui.painter().vline(cell.left(), rect.y_range(), Stroke::new(1.0, c(s.outline)));
+        }
+        let ink = if on { c(s.on_secondary_container) } else { c(s.on_surface) };
+        ui.painter().text(cell.center(), Align2::CENTER_CENTER, *label, font(text::LABEL_LARGE), ink);
+        if response.clicked() && !on {
+            *selected = i;
+            changed = true;
+        }
+    }
+    changed
+}

@@ -5,20 +5,24 @@ mod canvas;
 mod popup;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use egui::{Align2, FontFamily, Sense, pos2, vec2};
 use egui_material_icons::icons::{ICON_ARROW_BACK, ICON_LIST};
+use rubiyomi_core::cards::CardState;
+use rubiyomi_core::finder::Word;
+use rubiyomi_core::grade::{GradeError, StateMap};
 use rubiyomi_core::library::{BookMeta, Library, Progress, fsutil::now};
 use rubiyomi_core::reader::layout::{self, LayoutBlock, LayoutConfig, Page, page_for_offset};
 use rubiyomi_core::reader::runs::{Run, book_runs};
 use rubiyomi_core::text::{Block, Chapter};
 
 use super::Ctx;
-use crate::task::Task;
+use crate::task::{self, Task};
 use crate::ui::fonts::BOOK_SERIF;
 use crate::ui::m3::{self, c, font, text};
 use canvas::{EguiMeasure, PaintOptions, paint_page, to_screen};
-use popup::{Content, Popup};
+use popup::{Action, Content, Popup, state_colour};
 
 const FONT_SIZE: f32 = 24.0;
 const LINE_HEIGHT: f32 = 1.8;
@@ -28,6 +32,16 @@ const MARGIN: f32 = 24.0;
 enum Turn {
     Next,
     Previous,
+}
+
+type Reviewed = (Word, Action, Result<CardState, GradeError>);
+
+struct Colours {
+    index: usize,
+    generation: u64,
+    // Sorted by start, in chapter offsets.
+    words: Arc<Vec<Word>>,
+    states: StateMap,
 }
 
 pub struct ReaderScreen {
@@ -49,6 +63,9 @@ pub struct ReaderScreen {
     decoding: Vec<Task<(String, Option<egui::ColorImage>)>>,
     saved: (usize, usize),
     drag: egui::Vec2,
+    colours: Option<Colours>,
+    colouring: Option<Task<Colours>>,
+    grading: Option<Task<Reviewed>>,
 }
 
 impl ReaderScreen {
@@ -75,6 +92,9 @@ impl ReaderScreen {
             decoding: Vec::new(),
             saved: (index, progress.offset as usize),
             drag: egui::Vec2::ZERO,
+            colours: None,
+            colouring: None,
+            grading: None,
         };
         reader.runs = reader.chapter_runs();
         Ok(reader)
@@ -235,11 +255,15 @@ impl ReaderScreen {
         if std::mem::take(&mut self.save_after_layout) {
             self.save(cx.library);
         }
+        self.colour(&ctx, cx);
+        self.poll_grading(&ctx, cx);
         self.page_ui(ui, cx, area);
 
         let mut close = false;
-        if let Some(popup) = &mut self.popup {
-            popup.ui(&ctx, s);
+        if let Some(popup) = &mut self.popup
+            && let Some(action) = popup.ui(&ctx, s, cx.grader.map(|g| &**g))
+        {
+            self.review(&ctx, cx, action);
         }
         if self.chapters {
             if let Some(i) = self.chapter_list(&ctx, cx) {
@@ -320,7 +344,15 @@ impl ReaderScreen {
             }
             let options =
                 PaintOptions { family: FontFamily::Name(BOOK_SERIF.into()), text: c(s.on_surface), ruby: c(s.on_surface_variant) };
-            paint_page(ui.painter(), origin, &page, &options);
+            let dark = ctx.theme() == egui::Theme::Dark;
+            let colours = self.colours.as_ref().filter(|c| c.index == self.index);
+            let ink = |offset: usize| {
+                let c = colours?;
+                let w = &c.words[c.words.partition_point(|w| w.start <= offset).checked_sub(1)?];
+                (offset < w.start + w.len).then_some(())?;
+                state_colour(*c.states.get(&w.key())?, dark)
+            };
+            paint_page(ui.painter(), origin, &page, &options, ink);
         }
         if self.pages.len() > 1 && !self.bar {
             ui.painter().text(
@@ -386,7 +418,103 @@ impl ReaderScreen {
         let Some(word) = found else { return };
         let span = block_start + word.start..block_start + word.start + word.len;
         let rect = self.span_rect(origin, span.clone());
-        self.popup = Some(Popup::new(rect, span, Content::Word(word)));
+        let mut popup = Popup::new(rect, span, Content::Word(word.clone()));
+        popup.sentence = sentence(&text.text, word.start);
+        popup.state = cx.grader.and_then(|g| g.states(std::slice::from_ref(&word)).get(&word.key()).copied());
+        popup.busy = self.grading.is_some();
+        self.popup = Some(popup);
+    }
+
+    // Finding the words of a chapter takes a moment, so it runs aside; the
+    // states are asked again whenever the grader says they changed.
+    fn colour(&mut self, ctx: &egui::Context, cx: &Ctx<'_>) {
+        if let Some(done) = task::take(&mut self.colouring) {
+            self.colours = Some(done);
+        }
+        let (Some(grader), Ok(finder)) = (cx.grader, cx.finder) else {
+            self.colours = None;
+            return;
+        };
+        let fresh = self.colours.as_ref().is_some_and(|c| c.index == self.index && c.generation == cx.generation);
+        if fresh || self.colouring.is_some() {
+            return;
+        }
+        let (grader, finder, index, generation) = (grader.clone(), finder.clone(), self.index, cx.generation);
+        let known = self.colours.as_ref().filter(|c| c.index == index).map(|c| c.words.clone());
+        let texts: Vec<(usize, String)> = if known.is_some() {
+            Vec::new()
+        } else {
+            let mut start = 0;
+            let mut texts = Vec::new();
+            for b in &self.chapter.blocks {
+                if let Some(t) = b.as_text() {
+                    texts.push((start, t.text.clone()));
+                }
+                start += b.char_len();
+            }
+            texts
+        };
+        self.colouring = Some(Task::spawn(ctx, move || {
+            let words = known.unwrap_or_else(|| {
+                let mut all = Vec::new();
+                for (start, text) in &texts {
+                    all.extend(finder.words(text).into_iter().map(|mut w| {
+                        w.start += start;
+                        w
+                    }));
+                }
+                Arc::new(all)
+            });
+            let states = grader.states(&words);
+            Colours { index, generation, words, states }
+        }));
+    }
+
+    fn review(&mut self, ctx: &egui::Context, cx: &Ctx<'_>, action: Action) {
+        let (Some(grader), Some(popup)) = (cx.grader, &mut self.popup) else { return };
+        let Content::Word(word) = &popup.content else { return };
+        if self.grading.is_some() {
+            return;
+        }
+        popup.busy = true;
+        let (grader, word, sentence) = (grader.clone(), word.clone(), popup.sentence.clone());
+        self.grading = Some(Task::spawn(ctx, move || {
+            let result = match action {
+                Action::Grade(value) => grader.grade(&word, value, &sentence),
+                Action::Add => grader.add(&word, &sentence),
+                Action::Act(what) => grader.act(&word, what, &sentence),
+            };
+            (word, action, result)
+        }));
+    }
+
+    fn poll_grading(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>) {
+        let Some((word, action, result)) = task::take(&mut self.grading) else { return };
+        let key = word.key();
+        let mut popup = self.popup.as_mut().filter(|p| matches!(&p.content, Content::Word(w) if w.key() == key));
+        if let Some(p) = popup.as_mut() {
+            p.busy = false;
+        }
+        match result {
+            Ok(state) => {
+                if let Some(c) = &mut self.colours {
+                    c.states.insert(key, state);
+                }
+                if let Some(p) = popup {
+                    p.state = Some(state);
+                }
+                let done = match action {
+                    Action::Grade(_) => format!("Graded {} · {}", word.spelling, state.label()),
+                    Action::Add => format!("Added {} · {}", word.spelling, state.label()),
+                    Action::Act(what) => format!("{} · {what}", word.spelling),
+                };
+                cx.snackbar.show(ctx, done);
+            }
+            Err(e) => {
+                let name = cx.grader.map_or("Reviews", |g| g.name());
+                cx.snackbar.show(ctx, format!("{name}: {e}"));
+            }
+        }
     }
 
     fn span_rect(&self, origin: egui::Pos2, span: std::ops::Range<usize>) -> egui::Rect {
@@ -487,4 +615,16 @@ impl ReaderScreen {
         }
         picked
     }
+}
+
+// The sentence around a word, for the card.
+fn sentence(text: &str, at: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let ends = |c: char| matches!(c, '。' | '！' | '？' | '!' | '?' | '\n');
+    let start = chars[..at.min(chars.len())].iter().rposition(|&c| ends(c)).map_or(0, |i| i + 1);
+    let mut end = chars[at.min(chars.len())..].iter().position(|&c| ends(c)).map_or(chars.len(), |i| at + i + 1);
+    while end < chars.len() && matches!(chars[end], '」' | '』' | '）' | ')') {
+        end += 1;
+    }
+    chars[start..end].iter().collect::<String>().trim().to_owned()
 }

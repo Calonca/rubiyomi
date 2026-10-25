@@ -10,6 +10,7 @@ use lindera::dictionary::load_fs_dictionary;
 use lindera::mode::Mode;
 use lindera::segmenter::Segmenter;
 
+use crate::cards::WordKey;
 use crate::dict::jmdict::{Entry, Jmdict};
 use crate::dict::{DictState, DictStore};
 use crate::kana::{is_katakana, to_hiragana};
@@ -22,6 +23,13 @@ pub struct Word {
     pub spelling: String,
     pub reading: String,
     pub meanings: Vec<String>,
+    pub jmdict_id: Option<u32>,
+}
+
+impl Word {
+    pub fn key(&self) -> WordKey {
+        WordKey(format!("{}|{}", self.spelling, self.reading))
+    }
 }
 
 pub struct Finder {
@@ -71,12 +79,33 @@ impl Finder {
     pub fn word_at(&self, text: &str, at: usize) -> Option<Word> {
         let merged = merge(&self.morphs(text));
         let w = merged.into_iter().find(|w| (w.start..w.start + w.len).contains(&at))?;
-        let surface: String = text.chars().skip(w.start).take(w.len).collect();
-        let reading = to_hiragana(&w.reading);
         let jmdict = self.jmdict.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = lookup(&jmdict, &w, &surface, &reading);
-        Some(word(&w, &surface, &reading, entry.as_ref()))
+        Some(found(&jmdict, text, &w))
     }
+
+    // The words worth a colour: particles, endings and symbols are left out.
+    pub fn words(&self, text: &str) -> Vec<Word> {
+        let merged = merge(&self.morphs(text));
+        let jmdict = self.jmdict.lock().unwrap_or_else(|e| e.into_inner());
+        merged
+            .iter()
+            .filter(|w| !matches!(w.pos.as_str(), "助詞" | "助動詞" | "記号" | ""))
+            .filter(|w| text.chars().skip(w.start).take(w.len).any(is_japanese))
+            .map(|w| found(&jmdict, text, w))
+            .filter(|w| w.jmdict_id.is_some())
+            .collect()
+    }
+}
+
+fn is_japanese(c: char) -> bool {
+    matches!(c, '\u{3040}'..='\u{30FF}' | '\u{3400}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' | '\u{FF66}'..='\u{FF9F}')
+}
+
+fn found(jmdict: &Jmdict, text: &str, w: &Merged) -> Word {
+    let surface: String = text.chars().skip(w.start).take(w.len).collect();
+    let reading = to_hiragana(&w.reading);
+    let entry = lookup(jmdict, w, &surface, &reading);
+    word(w, &surface, &reading, entry.as_ref())
 }
 
 fn lookup(jmdict: &Jmdict, w: &Merged, surface: &str, reading: &str) -> Option<Entry> {
@@ -121,6 +150,7 @@ fn word(w: &Merged, surface: &str, reading: &str, entry: Option<&Entry>) -> Word
             let hint = if w.base == surface { reading } else { "" };
             out.reading = e.kana.iter().find(|k| *k == hint).or(e.kana.first()).cloned().unwrap_or_default();
             out.meanings = e.senses.clone();
+            out.jmdict_id = Some(e.id);
         }
         None => {
             out.reading = if reading.is_empty() && surface.chars().all(is_katakana) { to_hiragana(surface) } else { reading.to_owned() };

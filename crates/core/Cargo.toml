@@ -22,6 +22,7 @@ sha2 = "0.10"
 rusqlite = { version = "0.41", features = ["bundled"] }
 lzma-rs = "0.3"
 tar = "0.4"
+ureq = "3"
 lindera = { version = "6.2", default-features = false }
 
 [lints]

@@ -20,8 +20,11 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class MainActivity extends NativeActivity {
     private static final int PICK_EPUB = 1;
+    private static final int ANKI_PERMISSION = 2;
 
     private final ConcurrentLinkedQueue<String> events = new ConcurrentLinkedQueue<>();
+    private final AnkiDroidBridge anki = new AnkiDroidBridge(this);
+    private Secrets secrets;
 
     public void pickEpub() {
         runOnUiThread(() -> {
@@ -140,5 +143,37 @@ public class MainActivity extends NativeActivity {
 
     public boolean toBackground() {
         return moveTaskToBack(true);
+    }
+
+    public String ankiCall(String method, String argsJson) {
+        return anki.call(method, argsJson);
+    }
+
+    public void requestAnkiPermission() {
+        runOnUiThread(() -> requestPermissions(new String[] {AnkiDroidBridge.PERMISSION}, ANKI_PERMISSION));
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == ANKI_PERMISSION) {
+            boolean granted = results.length > 0 && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            events.add("permission\t" + (granted ? "granted" : "denied"));
+        }
+    }
+
+    private synchronized Secrets secrets() {
+        if (secrets == null) {
+            secrets = new Secrets(this);
+        }
+        return secrets;
+    }
+
+    public String secret(String name) {
+        return secrets().get(name);
+    }
+
+    public boolean setSecret(String name, String value) {
+        return secrets().set(name, value);
     }
 }

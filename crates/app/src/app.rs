@@ -11,6 +11,7 @@ use rubiyomi_core::library::{ImportError, Imported, Library};
 use rubiyomi_core::platform::{Platform, PlatformEvent};
 use rubiyomi_core::theme::{self, Scheme};
 
+use crate::reviews::Reviews;
 use crate::screens::library::LibraryScreen;
 use crate::screens::reader::ReaderScreen;
 use crate::screens::settings::SettingsScreen;
@@ -30,7 +31,8 @@ pub struct App {
     settings: SettingsScreen,
     dicts: DictStore,
     loading: Option<Task<Result<Finder, String>>>,
-    finder: Result<Finder, String>,
+    finder: Result<Arc<Finder>, String>,
+    reviews: Reviews,
 }
 
 impl App {
@@ -52,6 +54,7 @@ impl App {
                 Finder::open(&dicts)
             })
         };
+        let reviews = Reviews::new(ctx, &*platform);
         App {
             platform,
             library,
@@ -65,6 +68,7 @@ impl App {
             dicts,
             loading: Some(loading),
             finder: Err("Preparing the dictionary…".into()),
+            reviews,
         }
     }
 
@@ -92,7 +96,7 @@ impl App {
             if let Err(e) = &result {
                 log::warn!("word finder: {e}");
             }
-            self.finder = result;
+            self.finder = result.map(Arc::new);
         } else if self.loading.is_some()
             && let DictState::Unpacking(step) = self.dicts.state()
         {
@@ -129,6 +133,11 @@ impl App {
             match event {
                 PlatformEvent::Imported { path, name, temporary } => self.import(ctx, path, name, temporary),
                 PlatformEvent::ImportFailed(why) => self.snackbar.show(ctx, format!("Couldn't add it: {why}")),
+                PlatformEvent::Permission { granted: true } => {
+                    self.snackbar.show(ctx, "AnkiDroid access allowed");
+                    self.reviews.start(ctx, &*self.platform);
+                }
+                PlatformEvent::Permission { granted: false } => self.snackbar.show(ctx, "AnkiDroid access was refused"),
             }
         }
         let dropped: Vec<PathBuf> =
@@ -161,6 +170,7 @@ impl App {
         self.follow_system(&ctx);
         self.handle_events(&ctx);
         self.poll_finder();
+        self.reviews.poll();
         let s = self.schemes[(ctx.theme() == egui::Theme::Dark) as usize];
         let mut cx = Ctx {
             scheme: &s,
@@ -168,6 +178,8 @@ impl App {
             library: &self.library,
             snackbar: &mut self.snackbar,
             finder: self.finder.as_ref().map_err(String::as_str),
+            grader: self.reviews.grader.as_ref(),
+            generation: self.reviews.generation,
         };
         if let Some(reader) = &mut self.reader {
             if reader.ui(ui, &mut cx) {
@@ -183,7 +195,7 @@ impl App {
             0 => self.reader = self.shelf.ui(ui, &mut cx),
             1 => screens::words::ui(ui, &s),
             2 => screens::stats::ui(ui, &s),
-            _ => self.settings.ui(ui, &s, self.dicts.installed()),
+            _ => self.settings.ui(ui, &s, &*self.platform, &mut self.reviews, self.dicts.installed()),
         }
         self.snackbar.ui(&ctx, &s, 80.0);
         if ctx.input(|i| i.key_pressed(egui::Key::BrowserBack)) && !(self.section == 3 && self.settings.back()) {

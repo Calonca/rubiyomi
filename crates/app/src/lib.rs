@@ -7,6 +7,7 @@ use rubiyomi_core::platform::Platform;
 
 pub mod app;
 pub mod platform;
+pub mod reviews;
 pub mod screens;
 pub mod task;
 pub mod ui;

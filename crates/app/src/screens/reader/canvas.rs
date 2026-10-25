@@ -45,9 +45,9 @@ pub struct PaintOptions {
     pub ruby: Color32,
 }
 
-pub fn paint_page(painter: &Painter, origin: Pos2, page: &Page, o: &PaintOptions) {
+pub fn paint_page(painter: &Painter, origin: Pos2, page: &Page, o: &PaintOptions, ink: impl Fn(usize) -> Option<Color32>) {
     for g in &page.glyphs {
-        paint_glyph(painter, origin, g, &o.family, o.text);
+        paint_glyph(painter, origin, g, &o.family, ink(g.offset).unwrap_or(o.text));
     }
     for r in &page.ruby {
         let rect = to_screen(origin, &r.rect);

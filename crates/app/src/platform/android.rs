@@ -3,12 +3,15 @@
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use jni::JNIEnv;
 use jni::objects::{JIntArray, JObject, JString};
+use rubiyomi_core::grade::GradeError;
+use rubiyomi_core::grade::anki::{AnkiBackend, Note};
 use rubiyomi_core::platform::{Insets, Platform, PlatformEvent};
+use serde_json::{Value, json};
 use winit::platform::android::activity::AndroidApp;
 
 use super::EventQueue;
@@ -16,13 +19,35 @@ use super::EventQueue;
 pub struct Android {
     app: AndroidApp,
     queue: Arc<EventQueue>,
+    me: Weak<Android>,
 }
 
 impl Android {
     pub fn new(app: AndroidApp) -> Arc<Self> {
-        let me = Arc::new(Android { app, queue: Arc::new(EventQueue::default()) });
+        let me = Arc::new_cyclic(|me| Android { app, queue: Arc::new(EventQueue::default()), me: me.clone() });
         me.watch_events();
         me
+    }
+
+    fn anki_call(&self, method: &str, args: &Value) -> Result<Value, GradeError> {
+        let answer = self
+            .with_activity("ankiCall", |env, a| {
+                let m = env.new_string(method)?;
+                let j = env.new_string(args.to_string())?;
+                let v = env
+                    .call_method(a, "ankiCall", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", &[(&m).into(), (&j).into()])?
+                    .l()?;
+                let s: String = env.get_string(&JString::from(v))?.into();
+                Ok(s)
+            })
+            .ok_or_else(|| GradeError::Other("AnkiDroid couldn't be asked".into()))?;
+        let json: Value = serde_json::from_str(&answer).map_err(|_| GradeError::Other("AnkiDroid's answer wasn't JSON".into()))?;
+        match json.get("error").and_then(Value::as_str) {
+            Some("permission") => Err(GradeError::PermissionDenied),
+            Some("missing") => Err(GradeError::NotFound("AnkiDroid isn't installed".into())),
+            Some(_) => Err(GradeError::Other(format!("AnkiDroid: {}", json.get("message").and_then(Value::as_str).unwrap_or("failed")))),
+            None => Ok(json.get("ok").cloned().unwrap_or(Value::Null)),
+        }
     }
 
     fn with_activity<T>(&self, what: &str, f: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> jni::errors::Result<T>) -> Option<T> {
@@ -92,6 +117,7 @@ fn parse_event(line: &str) -> Option<PlatformEvent> {
             Some(PlatformEvent::Imported { path, name, temporary: true })
         }
         "import-failed" => Some(PlatformEvent::ImportFailed(fields.next().unwrap_or("unknown error").to_owned())),
+        "permission" => Some(PlatformEvent::Permission { granted: fields.next() == Some("granted") }),
         other => {
             log::warn!("unknown event from Java: {other}");
             None
@@ -161,5 +187,86 @@ impl Platform for Android {
 
     fn to_background(&self) -> bool {
         self.with_activity("toBackground", |env, a| env.call_method(a, "toBackground", "()Z", &[])?.z()).unwrap_or(false)
+    }
+
+    fn anki_droid(&self) -> Option<Box<dyn AnkiBackend>> {
+        Some(Box::new(AnkiDroid { android: self.me.upgrade()? }))
+    }
+
+    fn anki_droid_status(&self) -> Option<(bool, bool)> {
+        let s = self.anki_call("status", &json!({})).ok()?;
+        Some((s["installed"].as_bool().unwrap_or(false), s["permission"].as_bool().unwrap_or(false)))
+    }
+
+    fn request_anki_permission(&self) {
+        self.with_activity("requestAnkiPermission", |env, a| env.call_method(a, "requestAnkiPermission", "()V", &[]).map(|_| ()));
+    }
+
+    fn secret(&self, name: &str) -> Option<String> {
+        self.with_activity("secret", |env, a| {
+            let name = env.new_string(name)?;
+            let v = env.call_method(a, "secret", "(Ljava/lang/String;)Ljava/lang/String;", &[(&name).into()])?.l()?;
+            if v.is_null() {
+                return Ok(None);
+            }
+            Ok(Some(env.get_string(&JString::from(v))?.into()))
+        })
+        .flatten()
+    }
+
+    fn set_secret(&self, name: &str, value: &str) -> Result<(), String> {
+        let stored = self.with_activity("setSecret", |env, a| {
+            let (name, value) = (env.new_string(name)?, env.new_string(value)?);
+            env.call_method(a, "setSecret", "(Ljava/lang/String;Ljava/lang/String;)Z", &[(&name).into(), (&value).into()])?.z()
+        });
+        if stored == Some(true) { Ok(()) } else { Err("the Android Keystore refused it".into()) }
+    }
+}
+
+struct AnkiDroid {
+    android: Arc<Android>,
+}
+
+fn strings(v: &Value) -> Vec<String> {
+    v.as_array().map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_owned)).collect()).unwrap_or_default()
+}
+
+impl AnkiBackend for AnkiDroid {
+    fn decks(&self) -> Result<Vec<String>, GradeError> {
+        Ok(strings(&self.android.anki_call("decks", &json!({}))?))
+    }
+
+    fn note_types(&self) -> Result<Vec<String>, GradeError> {
+        Ok(strings(&self.android.anki_call("noteTypes", &json!({}))?))
+    }
+
+    fn fields(&self, note_type: &str) -> Result<Vec<String>, GradeError> {
+        Ok(strings(&self.android.anki_call("fields", &json!({ "noteType": note_type }))?))
+    }
+
+    fn find_notes(&self, query: &str) -> Result<Vec<u64>, GradeError> {
+        let v = self.android.anki_call("findNotes", &json!({ "query": query }))?;
+        Ok(v.as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default())
+    }
+
+    fn notes(&self, ids: &[u64]) -> Result<Vec<Note>, GradeError> {
+        let v = self.android.anki_call("notes", &json!({ "ids": ids }))?;
+        Ok(v.as_array().into_iter().flatten().filter_map(|n| Some(Note { id: n["id"].as_u64()?, fields: strings(&n["fields"]) })).collect())
+    }
+
+    fn answer(&self, note: u64, ease: u8) -> Result<(), GradeError> {
+        let changed = self.android.anki_call("answer", &json!({ "note": note, "ease": ease }))?;
+        // AnkiDroid ignores a grade for a card that isn't due.
+        if changed.as_u64() == Some(0) {
+            return Err(GradeError::Other("AnkiDroid didn't take the grade (is the card due?)".into()));
+        }
+        Ok(())
+    }
+
+    fn add_note(&self, deck: &str, note_type: &str, fields: &[(String, String)], tags: &[&str]) -> Result<u64, GradeError> {
+        let map: serde_json::Map<String, Value> = fields.iter().map(|(k, v)| (k.clone(), v.clone().into())).collect();
+        let v =
+            self.android.anki_call("addNote", &json!({ "deck": deck, "noteType": note_type, "fields": map, "tags": tags.join(" ") }))?;
+        v.as_u64().ok_or_else(|| GradeError::Other("AnkiDroid didn't add the note".into()))
     }
 }
