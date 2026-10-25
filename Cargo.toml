@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/app"]
+default-members = ["crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Alessandro La Conca"]
+publish = false
+
+[workspace.dependencies]
+rubiyomi-core = { path = "crates/core" }
+egui = "0.36"
+eframe = { version = "0.36", default-features = false }
+log = "0.4"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# Everyday builds: release speed without LTO. `--release` is the one to hand out.
+[profile.fast]
+inherits = "release"
+lto = false
+incremental = true
+codegen-units = 256
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
