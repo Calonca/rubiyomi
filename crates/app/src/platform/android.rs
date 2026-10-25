@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -105,6 +106,20 @@ impl Platform for Android {
         dir
     }
 
+    fn bundled(&self, name: &str) -> Option<Box<dyn Read + Send>> {
+        let path = std::ffi::CString::new(format!("dict/{name}")).ok()?;
+        let mut asset = self.app.asset_manager().open(&path)?;
+        // Only assets stored uncompressed (the .xz ones) have a file descriptor.
+        let Ok(fd) = asset.open_file_descriptor() else {
+            let mut bytes = Vec::new();
+            asset.read_to_end(&mut bytes).ok()?;
+            return Some(Box::new(std::io::Cursor::new(bytes)));
+        };
+        let mut file = std::fs::File::from(fd.fd);
+        file.seek(SeekFrom::Start(fd.offset as u64)).ok()?;
+        Some(Box::new(file.take(fd.size as u64)))
+    }
+
     fn dark_mode(&self) -> Option<bool> {
         self.with_activity("darkMode", |env, a| env.call_method(a, "darkMode", "()Z", &[])?.z())
     }
@@ -134,6 +149,14 @@ impl Platform for Android {
             Ok(v.map(|x| x as f32))
         })
         .unwrap_or([0.0; 4])
+    }
+
+    fn open_url(&self, url: &str) -> bool {
+        self.with_activity("openUrl", |env, a| {
+            let url = env.new_string(url)?;
+            env.call_method(a, "openUrl", "(Ljava/lang/String;)Z", &[(&url).into()])?.z()
+        })
+        .unwrap_or(false)
     }
 
     fn to_background(&self) -> bool {

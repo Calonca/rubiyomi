@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Alessandro La Conca
 
 mod canvas;
+mod popup;
 
 use std::collections::HashMap;
 
@@ -17,8 +18,9 @@ use crate::task::Task;
 use crate::ui::fonts::BOOK_SERIF;
 use crate::ui::m3::{self, c, font, text};
 use canvas::{EguiMeasure, PaintOptions, paint_page, to_screen};
+use popup::{Content, Popup};
 
-const FONT_SIZE: f32 = 20.0;
+const FONT_SIZE: f32 = 24.0;
 const LINE_HEIGHT: f32 = 1.8;
 const MARGIN: f32 = 24.0;
 
@@ -42,6 +44,7 @@ pub struct ReaderScreen {
     bar: bool,
     chapters: bool,
     scroll_to_current: bool,
+    popup: Option<Popup>,
     images: HashMap<String, egui::TextureHandle>,
     decoding: Vec<Task<(String, Option<egui::ColorImage>)>>,
     saved: (usize, usize),
@@ -67,6 +70,7 @@ impl ReaderScreen {
             bar: false,
             chapters: false,
             scroll_to_current: false,
+            popup: None,
             images: HashMap::new(),
             decoding: Vec::new(),
             saved: (index, progress.offset as usize),
@@ -86,6 +90,7 @@ impl ReaderScreen {
 
     fn load_chapter(&mut self, library: &Library, index: usize) -> bool {
         let Some(chapter) = library.chapter(&self.meta.id, index) else { return false };
+        self.popup = None;
         self.index = index;
         self.chapter = chapter;
         self.runs = self.chapter_runs();
@@ -102,6 +107,7 @@ impl ReaderScreen {
     }
 
     fn turn(&mut self, library: &Library, turn: Turn) {
+        self.popup = None;
         match turn {
             Turn::Next if self.page + 1 < self.pages.len() => self.page += 1,
             Turn::Next if self.index + 1 < self.meta.chapters.len() => {
@@ -232,6 +238,9 @@ impl ReaderScreen {
         self.page_ui(ui, cx, area);
 
         let mut close = false;
+        if let Some(popup) = &mut self.popup {
+            popup.ui(&ctx, s);
+        }
         if self.chapters {
             if let Some(i) = self.chapter_list(&ctx, cx) {
                 self.go_to_chapter(cx.library, i);
@@ -242,7 +251,9 @@ impl ReaderScreen {
             close = self.bars(&ctx, cx);
         }
         if ctx.input(|i| i.key_pressed(egui::Key::BrowserBack) || i.key_pressed(egui::Key::Escape)) {
-            if self.chapters {
+            if self.popup.is_some() {
+                self.popup = None;
+            } else if self.chapters {
                 self.chapters = false;
             } else if self.bar {
                 self.bar = false;
@@ -294,6 +305,19 @@ impl ReaderScreen {
                     }
                 }
             }
+            if let Some(popup) = &self.popup {
+                // One rectangle per line the word spans.
+                let mut lines: Vec<egui::Rect> = Vec::new();
+                for r in page.glyphs.iter().filter(|g| popup.span.contains(&g.offset)).map(|g| to_screen(origin, &g.rect)) {
+                    match lines.last_mut() {
+                        Some(line) if (line.center().y - r.center().y).abs() < r.height() / 2.0 => *line = line.union(r),
+                        _ => lines.push(r),
+                    }
+                }
+                for line in lines {
+                    ui.painter().rect_filled(line.expand2(vec2(2.0, 1.0)), 4.0, m3::alpha(c(s.primary), 0.25));
+                }
+            }
             let options =
                 PaintOptions { family: FontFamily::Name(BOOK_SERIF.into()), text: c(s.on_surface), ruby: c(s.on_surface_variant) };
             paint_page(ui.painter(), origin, &page, &options);
@@ -322,12 +346,57 @@ impl ReaderScreen {
             && let Some(p) = response.interact_pointer_pos()
         {
             let third = area.width() / 3.0;
-            if self.bar || (p.x >= area.left() + third && p.x <= area.right() - third) {
+            if self.popup.is_some() {
+                self.popup = None;
+            } else if !self.bar
+                && let Some(offset) = self.glyph_at(p - origin)
+            {
+                self.look_up(cx, origin, offset);
+            } else if self.bar || (p.x >= area.left() + third && p.x <= area.right() - third) {
                 self.bar = !self.bar;
             } else {
                 self.turn(cx.library, if p.x > area.right() - third { Turn::Next } else { Turn::Previous });
             }
         }
+    }
+
+    fn glyph_at(&self, at: egui::Vec2) -> Option<usize> {
+        let page = self.pages.get(self.page)?;
+        let hit = |r: &layout::Rect| r.contains(at.x, at.y);
+        if let Some(g) = page.glyphs.iter().find(|g| hit(&g.rect) && !g.text.trim().is_empty()) {
+            return Some(g.offset);
+        }
+        // Furigana stands for the kanji under it.
+        let ruby = page.ruby.iter().find(|r| hit(&r.rect))?;
+        page.glyphs.iter().find(|g| g.block == ruby.block && g.run == ruby.run).map(|g| g.offset)
+    }
+
+    fn look_up(&mut self, cx: &Ctx<'_>, origin: egui::Pos2, offset: usize) {
+        let (block, local) = self.chapter.locate(offset);
+        let Some(text) = self.chapter.blocks.get(block).and_then(Block::as_text) else { return };
+        let block_start = self.chapter.block_start(block);
+        let found = match cx.finder {
+            Ok(finder) => finder.word_at(&text.text, local),
+            Err(note) => {
+                let rect = self.span_rect(origin, offset..offset + 1);
+                self.popup = Some(Popup::new(rect, offset..offset + 1, Content::Message(note.to_owned())));
+                return;
+            }
+        };
+        let Some(word) = found else { return };
+        let span = block_start + word.start..block_start + word.start + word.len;
+        let rect = self.span_rect(origin, span.clone());
+        self.popup = Some(Popup::new(rect, span, Content::Word(word)));
+    }
+
+    fn span_rect(&self, origin: egui::Pos2, span: std::ops::Range<usize>) -> egui::Rect {
+        let Some(page) = self.pages.get(self.page) else { return egui::Rect::NOTHING };
+        page.glyphs
+            .iter()
+            .filter(|g| span.contains(&g.offset))
+            .map(|g| to_screen(origin, &g.rect))
+            .reduce(|a, b| a.union(b))
+            .unwrap_or(egui::Rect::NOTHING)
     }
 
     fn bars(&mut self, ctx: &egui::Context, cx: &mut Ctx<'_>) -> bool {

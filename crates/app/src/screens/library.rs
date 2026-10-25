@@ -60,7 +60,7 @@ impl LibraryScreen {
             }
         }
         let mut open = None;
-        m3::top_app_bar(ui, s, "Library");
+        m3::top_app_bar(ui, s, "Library", false);
         egui::CentralPanel::default().frame(super::surface(s)).show(ui, |ui| {
             if self.books.is_empty() {
                 m3::empty_state(ui, s, ICON_LOCAL_LIBRARY, "No books yet", "Add an EPUB to start reading.");

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -40,6 +41,21 @@ impl Platform for Desktop {
         dir
     }
 
+    fn bundled(&self, name: &str) -> Option<Box<dyn Read + Send>> {
+        let mut dirs = Vec::new();
+        if let Some(env) = std::env::var_os("RUBIYOMI_DICT_DIR") {
+            dirs.push(PathBuf::from(env));
+        }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            dirs.push(dir.join("dict"));
+            dirs.push(dir.join("../share/rubiyomi/dict"));
+        }
+        dirs.push(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../dist/dict")));
+        dirs.into_iter().find_map(|d| std::fs::File::open(d.join(name)).ok()).map(|f| Box::new(f) as Box<dyn Read + Send>)
+    }
+
     fn accent_color(&self) -> Option<u32> {
         None
     }
@@ -64,6 +80,16 @@ impl Platform for Desktop {
 
     fn insets(&self) -> Insets {
         [0.0; 4]
+    }
+
+    fn open_url(&self, url: &str) -> bool {
+        for command in [&["xdg-open"][..], &["flatpak-spawn", "--host", "xdg-open"][..]] {
+            let status = std::process::Command::new(command[0]).args(&command[1..]).arg(url).status();
+            if status.is_ok_and(|s| s.success()) {
+                return true;
+            }
+        }
+        false
     }
 
     fn to_background(&self) -> bool {

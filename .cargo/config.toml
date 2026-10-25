@@ -1,0 +1,2 @@
+[alias]
+xtask = "run -q --profile fast -p xtask --"

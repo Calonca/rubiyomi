@@ -127,6 +127,17 @@ public class MainActivity extends NativeActivity {
         };
     }
 
+    public boolean openUrl(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public boolean toBackground() {
         return moveTaskToBack(true);
     }

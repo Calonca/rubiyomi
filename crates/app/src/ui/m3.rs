@@ -100,22 +100,28 @@ pub fn paint_icon(ui: &Ui, icon: MaterialIcon, center: egui::Pos2, size: f32, co
     ui.painter().text(center, Align2::CENTER_CENTER, icon.codepoint, FontId::new(size, icon.font_family()), color);
 }
 
-pub fn top_app_bar(ui: &mut Ui, s: &Scheme, title: &str) {
+pub fn top_app_bar(ui: &mut Ui, s: &Scheme, title: &str, back: bool) -> bool {
     let inset = insets(ui.ctx());
+    let mut pressed = false;
     egui::Panel::top(egui::Id::new(("top-app-bar", title)))
         .exact_size(64.0 + inset.top as f32)
         .show_separator_line(false)
         .frame(egui::Frame::new().fill(c(s.surface)).inner_margin(Margin {
             top: inset.top,
-            left: inset.left + 16,
+            left: inset.left + if back { 4 } else { 16 },
             right: inset.right + 4,
             bottom: 0,
         }))
         .show(ui, |ui| {
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                if back {
+                    pressed = icon_button(ui, s, egui_material_icons::icons::ICON_ARROW_BACK, c(s.on_surface)).clicked();
+                    ui.add_space(4.0);
+                }
                 ui.label(egui::RichText::new(title).font(font(text::TITLE_LARGE)).color(c(s.on_surface)));
             });
         });
+    pressed
 }
 
 pub fn navigation_bar(ui: &mut Ui, s: &Scheme, items: &[(MaterialIcon, &str)], selected: &mut usize) {
@@ -182,8 +188,12 @@ pub fn section_header(ui: &mut Ui, s: &Scheme, title: &str) {
     ui.add_space(4.0);
 }
 
-pub fn list_item(ui: &mut Ui, s: &Scheme, icon: MaterialIcon, headline: &str, supporting: &str) -> Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 72.0), Sense::hover());
+pub fn list_item(ui: &mut Ui, s: &Scheme, icon: MaterialIcon, headline: &str, supporting: &str, clickable: bool) -> Response {
+    let sense = if clickable { Sense::click() } else { Sense::hover() };
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 72.0), sense);
+    if clickable {
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, alpha(c(s.on_surface), state_layer(&response)));
+    }
     let p = ui.painter();
     paint_icon(ui, icon, pos2(rect.left() + 16.0 + 12.0, rect.center().y), 24.0, c(s.on_surface_variant));
     let x = rect.left() + 16.0 + 24.0 + 16.0;

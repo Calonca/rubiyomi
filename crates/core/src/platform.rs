@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
+use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,6 +14,8 @@ pub type Insets = [f32; 4];
 
 pub trait Platform: Send + Sync {
     fn data_dir(&self) -> PathBuf;
+
+    fn bundled(&self, name: &str) -> Option<Box<dyn Read + Send>>;
 
     fn accent_color(&self) -> Option<u32>;
 
@@ -27,6 +30,8 @@ pub trait Platform: Send + Sync {
     fn set_waker(&self, wake: Box<dyn Fn() + Send + Sync>);
 
     fn insets(&self) -> Insets;
+
+    fn open_url(&self, url: &str) -> bool;
 
     fn to_background(&self) -> bool;
 }

@@ -4,11 +4,16 @@ Rust + egui reader for Japanese books, Linux and Android.
 
 ## Layout
 
-- `crates/core` — no egui, no JNI: EPUB, library store, layout, platform trait,
-  colour schemes. Unit tests live next to the code; test EPUBs are built in
+- `crates/core` — no egui, no JNI: EPUB, library store, layout, dictionaries
+  (JMdict index, unpacking), word finder (lindera), platform trait, colour
+  schemes. Unit tests live next to the code; test EPUBs are built in
   code (`testing.rs`).
 - `crates/app` — egui UI, desktop binary and Android cdylib.
 - `android/` — Gradle project; `MainActivity` extends NativeActivity.
+- `xtask` — `cargo xtask dict` builds the bundled dictionaries into
+  `dist/dict/` (JMdict release pinned with its checksum in `xtask/src/main.rs`;
+  bump it to the newest jmdict-simplified English release before each
+  release). The APK build needs them; desktop builds find them there.
 - `art/` — the icon source (`icon.svg`) and the 512 px store icon.
 
 ## Building
@@ -37,4 +42,7 @@ Run builds through `slotq` (APK: `--cpus 6 --mem 6G`).
   the source noted.
 - Comments only for a non-obvious why. Tests only where they guard something
   real.
+- Dictionary data (JMdict, IPADIC) is never committed. JMdict: English only,
+  credited in the app (Settings → About → Dictionary), README and
+  THIRD_PARTY_NOTICES.md; the data and our index are CC BY-SA 4.0.
 - UI text is English; only book content is Japanese.

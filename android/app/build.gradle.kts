@@ -12,8 +12,8 @@ android {
         applicationId = "dev.calonca.rubiyomi"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.3.0"
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -29,6 +29,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // The dictionaries are xz already: deflating them again only costs time.
+    androidResources {
+        noCompress += "xz"
     }
 
     packaging {

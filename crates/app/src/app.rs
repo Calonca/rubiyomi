@@ -5,12 +5,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use egui_material_icons::icons::{ICON_DICTIONARY, ICON_INSIGHTS, ICON_LOCAL_LIBRARY, ICON_SETTINGS};
+use rubiyomi_core::dict::{DictState, DictStore};
+use rubiyomi_core::finder::Finder;
 use rubiyomi_core::library::{ImportError, Imported, Library};
 use rubiyomi_core::platform::{Platform, PlatformEvent};
 use rubiyomi_core::theme::{self, Scheme};
 
 use crate::screens::library::LibraryScreen;
 use crate::screens::reader::ReaderScreen;
+use crate::screens::settings::SettingsScreen;
 use crate::screens::{self, Ctx};
 use crate::task::{self, Task};
 use crate::ui::{fonts, m3};
@@ -24,6 +27,10 @@ pub struct App {
     reader: Option<ReaderScreen>,
     snackbar: m3::Snackbar,
     imports: Vec<Task<(String, Result<Imported, ImportError>)>>,
+    settings: SettingsScreen,
+    dicts: DictStore,
+    loading: Option<Task<Result<Finder, String>>>,
+    finder: Result<Finder, String>,
 }
 
 impl App {
@@ -37,6 +44,14 @@ impl App {
             m3::apply(ctx, s);
         }
         let library = Library::open(platform.data_dir());
+        let dicts = DictStore::new(&platform.data_dir());
+        let loading = {
+            let (platform, dicts) = (platform.clone(), dicts.clone());
+            Task::spawn(ctx, move || {
+                dicts.prepare(&*platform);
+                Finder::open(&dicts)
+            })
+        };
         App {
             platform,
             library,
@@ -46,6 +61,42 @@ impl App {
             reader: None,
             snackbar: m3::Snackbar::default(),
             imports: Vec::new(),
+            settings: SettingsScreen::default(),
+            dicts,
+            loading: Some(loading),
+            finder: Err("Preparing the dictionary…".into()),
+        }
+    }
+
+    // eframe is built without its own link opener, so links go through the platform.
+    fn open_links(&self, ctx: &egui::Context) {
+        let mut urls = Vec::new();
+        ctx.output_mut(|o| {
+            o.commands.retain(|c| match c {
+                egui::OutputCommand::OpenUrl(open) => {
+                    urls.push(open.url.clone());
+                    false
+                }
+                _ => true,
+            })
+        });
+        for url in urls {
+            if !self.platform.open_url(&url) {
+                log::warn!("couldn't open {url}");
+            }
+        }
+    }
+
+    fn poll_finder(&mut self) {
+        if let Some(result) = task::take(&mut self.loading) {
+            if let Err(e) = &result {
+                log::warn!("word finder: {e}");
+            }
+            self.finder = result;
+        } else if self.loading.is_some()
+            && let DictState::Unpacking(step) = self.dicts.state()
+        {
+            self.finder = Err(format!("{step}…"));
         }
     }
 
@@ -99,11 +150,25 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.screen(ui);
+        self.open_links(ui.ctx());
+    }
+}
+
+impl App {
+    fn screen(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.follow_system(&ctx);
         self.handle_events(&ctx);
+        self.poll_finder();
         let s = self.schemes[(ctx.theme() == egui::Theme::Dark) as usize];
-        let mut cx = Ctx { scheme: &s, platform: &*self.platform, library: &self.library, snackbar: &mut self.snackbar };
+        let mut cx = Ctx {
+            scheme: &s,
+            platform: &*self.platform,
+            library: &self.library,
+            snackbar: &mut self.snackbar,
+            finder: self.finder.as_ref().map_err(String::as_str),
+        };
         if let Some(reader) = &mut self.reader {
             if reader.ui(ui, &mut cx) {
                 self.reader = None;
@@ -118,10 +183,10 @@ impl eframe::App for App {
             0 => self.reader = self.shelf.ui(ui, &mut cx),
             1 => screens::words::ui(ui, &s),
             2 => screens::stats::ui(ui, &s),
-            _ => screens::settings::ui(ui, &s),
+            _ => self.settings.ui(ui, &s, self.dicts.installed()),
         }
         self.snackbar.ui(&ctx, &s, 80.0);
-        if ctx.input(|i| i.key_pressed(egui::Key::BrowserBack)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::BrowserBack)) && !(self.section == 3 && self.settings.back()) {
             if self.section != 0 {
                 self.section = 0;
             } else if !self.platform.to_background() {

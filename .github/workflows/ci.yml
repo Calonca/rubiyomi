@@ -44,6 +44,8 @@ jobs:
       - run: sdkmanager "ndk;28.2.13676358"
       - run: cargo install cargo-ndk --locked
       - run: cargo clippy -p rubiyomi --lib --target aarch64-linux-android -- -D warnings
+      - name: Build the bundled dictionaries
+        run: cargo xtask dict
       - name: Build the APK
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/28.2.13676358
