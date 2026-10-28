@@ -131,9 +131,9 @@ Material Color Utilities (Apache-2.0,
 its Rust port `material-colors` (MIT OR Apache-2.0,
 <https://github.com/Aiving/material-colors>).
 
-## Root certificates (jpdb.io connection)
+## Root certificates (jpdb.io and GitHub connections)
 
-HTTPS to jpdb.io is checked against Mozilla's list of root certificates,
+HTTPS to jpdb.io, and to GitHub for the update check, is checked against Mozilla's list of root certificates,
 bundled through the `webpki-roots` crate (CDLA-Permissive-2.0,
 <https://github.com/rustls/webpki-roots>; the list itself comes from
 Mozilla's CA Certificate Program through the Common CA Database,
@@ -148,6 +148,17 @@ egui's built-in fonts are included through `epaint_default_fonts`:
   derived from Bitstream Vera; DejaVu changes in the public domain.
 - Noto Emoji — SIL Open Font License 1.1, © Google Inc.
 - emoji-icon-font — MIT, © 2014 John Slegers.
+
+## AppImage runtime (Linux download)
+
+The Linux AppImage starts through the AppImage type 2 runtime
+(<https://github.com/AppImage/type2-runtime>, MIT), added by appimagetool. It
+is statically linked with libfuse 3 (LGPL-2.1-or-later,
+<https://github.com/libfuse/libfuse>), squashfuse (BSD-2-Clause,
+<https://github.com/vasi/squashfuse>), zstd (BSD-3-Clause,
+<https://github.com/facebook/zstd>) and zlib (Zlib). The runtime's source,
+and the means to relink it, are at those addresses; the app itself can be
+taken out of the AppImage with `--appimage-extract`.
 
 ## Rust crates
 

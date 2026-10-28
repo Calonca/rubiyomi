@@ -3352,7 +3352,7 @@ dependencies = [
 
 [[package]]
 name = "rubiyomi"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "android_logger",
  "eframe",
@@ -3367,13 +3367,14 @@ dependencies = [
  "rfd",
  "rubiyomi-core",
  "serde_json",
+ "windows-native-keyring-store",
  "winit",
  "zbus-secret-service-keyring-store",
 ]
 
 [[package]]
 name = "rubiyomi-core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "image",
@@ -4658,6 +4659,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
 
 [[package]]
+name = "windows-native-keyring-store"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "063426e76fdec7438d56bb777f67e318a84a25c707b07e575cb8b78e10c028f8"
+dependencies = [
+ "byteorder",
+ "keyring-core",
+ "regex",
+ "windows-sys 0.61.2",
+ "zeroize",
+]
+
+[[package]]
 name = "windows-result"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4980,7 +4994,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "lindera-ipadic",
  "rubiyomi-core",

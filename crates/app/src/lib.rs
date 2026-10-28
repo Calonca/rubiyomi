@@ -11,6 +11,7 @@ pub mod reviews;
 pub mod screens;
 pub mod task;
 pub mod ui;
+pub mod updates;
 
 pub fn run(options: eframe::NativeOptions, platform: Arc<dyn Platform>) -> eframe::Result<()> {
     eframe::run_native("Rubiyomi", options, Box::new(move |cc| Ok(Box::new(app::App::new(&cc.egui_ctx, platform)))))

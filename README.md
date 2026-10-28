@@ -2,9 +2,28 @@
 
 ![Rubiyomi](art/icon-512.png)
 
-A simple app for reading Japanese books in EPUB, on Android and Linux.
+A simple app for reading Japanese books in EPUB, on Android, Linux and
+Windows.
 
-**[Download the APK](https://github.com/Calonca/rubiyomi/releases/latest)**
+## Download
+
+From the [latest release](https://github.com/Calonca/rubiyomi/releases/latest):
+
+- **Android:** from Google Play, or `Rubiyomi-<version>.apk` to install it
+  yourself (Android asks you to allow installing apps from wherever you opened
+  it). The APK doesn't update itself; Google Play and the APK are signed with
+  different keys, so one can't update the other: to switch, uninstall first
+  (which removes your books and stats from the device).
+- **Linux:** `Rubiyomi-<version>-x86_64.AppImage`. Make it executable
+  (`chmod +x`, or Properties → Executable in your file manager) and run it.
+- **Windows:** `Rubiyomi-<version>-x86_64.exe`. One file, nothing to install:
+  run it. It isn't signed yet, so Windows SmartScreen warns about an unknown
+  publisher the first time; choose *More info* → *Run anyway*.
+
+The AppImage and the `.exe` look for a new version when they start and offer
+it in a pop-up: Update downloads it beside the running file, checks its
+SHA-256 and restarts into it, removing the old file. The check can be turned
+off under Settings → Updates.
 
 ## Features
 
@@ -30,7 +49,8 @@ A simple app for reading Japanese books in EPUB, on Android and Linux.
   chapter isn't counted as reading unless you say so.
 - **History.** The words you looked up are kept with their sentences.
 
-Nothing is collected: see [PRIVACY.md](PRIVACY.md).
+Nothing is collected: see [PRIVACY.md](PRIVACY.md). The desktop downloads ask
+GitHub for the latest release when they start, which you can turn off.
 
 ## Building
 
@@ -45,8 +65,24 @@ The APK needs the Android SDK, NDK 28 and `cargo-ndk`.
 `tool/android-build.sh release` builds the signed APK and the Play Store
 bundle. The upload key stays outside the repository: point
 `android/keystore.properties` at it (see `keystore.properties.example`) or set
-the `RUBIYOMI_KEYSTORE*` variables. A `v*` tag builds both on GitHub, with
-the key from the `release` environment's secrets, into a draft release.
+the `RUBIYOMI_KEYSTORE*` variables.
+
+The desktop downloads:
+
+```sh
+cargo build --release --features update-check
+tool/appimage.sh target/release/rubiyomi out         # Linux AppImage
+cargo build --release --features update-check,embed-dict --target x86_64-pc-windows-msvc
+```
+
+`embed-dict` puts the dictionaries inside the binary, for the single-file
+Windows `.exe`. Builds without `update-check` (`cargo run`, distro packages)
+never look for updates. `tool/update-feed.py FILE` serves a pretend release to
+try the update flow against.
+
+A `v*` tag builds the APK, the Play bundle, the AppImage and the `.exe` on
+GitHub, each with its `.sha256`, with the key from the `release` environment's
+secrets, into a draft release.
 
 ## Licence
 

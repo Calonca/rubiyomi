@@ -17,6 +17,7 @@ pub mod settings;
 pub mod stats;
 pub mod text;
 pub mod theme;
+pub mod update;
 
 #[cfg(test)]
 mod testing;

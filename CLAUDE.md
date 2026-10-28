@@ -32,9 +32,13 @@ Run builds through `slotq` (APK: `--cpus 6 --mem 6G`).
   `tool/android-build.sh fast` for the APK (the default; cargo-ndk, then
   Gradle; APK in `android/app/build/outputs/apk/debug/`). `--release` only for
   a build to hand out or for performance measurements.
+- Feature `update-check` (the desktop downloads only: AppImage, `.exe`) turns
+  on the update check; Android, `cargo run` and packaged builds never have it.
+  `embed-dict` puts the dictionaries in the Windows `.exe`. `tool/appimage.sh`
+  packs the AppImage; `tool/update-feed.py` serves a pretend release.
 - `tool/android-build.sh release` — signed APK plus AAB, with the upload key
   from `android/keystore.properties` or `RUBIYOMI_KEYSTORE*`; never commit a
-  key. A `v*` tag runs `release.yml` with the key from the `release` environment's secrets.
+  key. A `v*` tag runs `release.yml` (APK, AAB, AppImage, `.exe`, into a draft release) with the key from the `release` environment's secrets.
 - `cargo test --workspace --profile fast` — the tests; `tool/check.sh` runs
   all of CI's checks locally.
 - `tool/icon.py ZenOldMincho-Bold.ttf` regenerates the launcher icon layers and
