@@ -80,6 +80,28 @@ Windows `.exe`. Builds without `update-check` (`cargo run`, distro packages)
 never look for updates. `tool/update-feed.py FILE` serves a pretend release to
 try the update flow against.
 
+### macOS
+
+There is no macOS download; build it from source:
+
+1. Install the Xcode command line tools (`xcode-select --install`), Rust
+   (<https://rustup.rs>) and `xz` (`brew install xz`; the dictionary build
+   uses it).
+2. In a clone of this repository:
+
+   ```sh
+   cargo xtask dict          # the dictionaries, into dist/dict
+   cargo build --release
+   ```
+
+3. Run `target/release/rubiyomi`. It finds the dictionaries in the clone's
+   `dist/dict`; to move the binary elsewhere, put a copy of `dist/dict` beside
+   it as `dict`.
+
+A source build, on any system, has no update check: to update, `git pull` and
+build again. Your jpdb.io and AnkiConnect keys are kept in a file only your
+user can read, as the macOS Keychain isn't used yet.
+
 A `v*` tag builds the APK, the Play bundle, the AppImage and the `.exe` on
 GitHub, each with its `.sha256`, with the key from the `release` environment's
 secrets, into a draft release.
