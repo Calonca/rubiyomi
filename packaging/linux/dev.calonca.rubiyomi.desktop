@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+[Desktop Entry]
+Type=Application
+Name=Rubiyomi
+Comment=Read Japanese books in EPUB
+Exec=rubiyomi %F
+Icon=dev.calonca.rubiyomi
+Terminal=false
+Categories=Office;Viewer;Education;
+MimeType=application/epub+zip;
+Keywords=japanese;epub;reader;anki;jpdb;

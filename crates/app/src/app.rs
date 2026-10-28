@@ -24,6 +24,7 @@ use crate::screens::stats::StatsScreen;
 use crate::screens::words::WordsScreen;
 use crate::task::{self, Task};
 use crate::ui::{fonts, m3};
+use crate::updates::Updates;
 
 pub struct App {
     platform: Arc<dyn Platform>,
@@ -40,6 +41,7 @@ pub struct App {
     loading: Option<Task<Result<Finder, String>>>,
     finder: Result<Arc<Finder>, String>,
     reviews: Reviews,
+    updates: Updates,
     words_tag: Option<String>,
     page: PageSettings,
     history: History,
@@ -101,6 +103,7 @@ impl App {
             loading: Some(loading),
             finder: Err("Preparing the dictionary…".into()),
             words_tag,
+            updates: Updates::new(ctx, dir),
             reviews,
         }
     }
@@ -225,6 +228,7 @@ impl App {
         self.handle_events(&ctx);
         self.poll_finder();
         self.reviews.poll();
+        self.updates.poll(&ctx);
         let s = self.schemes[(ctx.theme() == egui::Theme::Dark) as usize];
         let awake = self.reader.is_some() && self.page.keep_awake;
         if awake != self.awake {
@@ -254,6 +258,7 @@ impl App {
             self.snackbar.ui(&ctx, &s, 0.0);
             return;
         }
+        self.updates.popup(&ctx, &s);
         if let Some(reader) = &mut self.reader {
             let close = reader.ui(ui, &mut cx);
             if let Some(since) = self.reopening.take() {
@@ -287,8 +292,16 @@ impl App {
             2 => self.stats_screen.ui(ui, &s, &self.stats),
             _ => {
                 let colours = self.reviews.grader.is_some();
-                if self.settings.ui(ui, &s, &*self.platform, &mut self.reviews, self.dicts.installed(), &mut self.page, colours)
-                    && let Err(e) = self.page.save(&self.platform.data_dir())
+                if self.settings.ui(
+                    ui,
+                    &s,
+                    &*self.platform,
+                    &mut self.reviews,
+                    &mut self.updates,
+                    self.dicts.installed(),
+                    &mut self.page,
+                    colours,
+                ) && let Err(e) = self.page.save(&self.platform.data_dir())
                 {
                     log::warn!("saving the page settings: {e}");
                 }

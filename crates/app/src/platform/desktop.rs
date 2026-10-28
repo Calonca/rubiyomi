@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -32,16 +31,30 @@ const SERVICE: &str = "Rubiyomi";
 
 fn keyring() -> bool {
     static READY: OnceLock<bool> = OnceLock::new();
-    *READY.get_or_init(|| match zbus_secret_service_keyring_store::Store::new() {
-        Ok(store) => {
-            keyring_core::set_default_store(store);
-            true
-        }
+    *READY.get_or_init(|| match native_store() {
+        Ok(()) => true,
         Err(e) => {
-            log::info!("no Secret Service ({e}); keys go to a file only this user can read");
+            log::info!("no keyring ({e}); keys go to a file only this user can read");
             false
         }
     })
+}
+
+#[cfg(target_os = "linux")]
+fn native_store() -> Result<(), String> {
+    keyring_core::set_default_store(zbus_secret_service_keyring_store::Store::new().map_err(|e| e.to_string())?);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn native_store() -> Result<(), String> {
+    keyring_core::set_default_store(windows_native_keyring_store::Store::new().map_err(|e| e.to_string())?);
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn native_store() -> Result<(), String> {
+    Err("no keyring support on this system".into())
 }
 
 fn secrets_file(dir: &Path) -> PathBuf {
@@ -50,10 +63,30 @@ fn secrets_file(dir: &Path) -> PathBuf {
 
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut f = options.open(&tmp)?;
     f.write_all(bytes)?;
     f.sync_all()?;
     std::fs::rename(&tmp, path)
+}
+
+#[cfg(feature = "embed-dict")]
+fn embedded(name: &str) -> Option<&'static [u8]> {
+    macro_rules! dict {
+        ($file:literal) => {
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../dist/dict/", $file))
+        };
+    }
+    Some(match name {
+        "jmdict.sqlite.xz" => dict!("jmdict.sqlite.xz"),
+        "ipadic.tar.xz" => dict!("ipadic.tar.xz"),
+        "version.json" => dict!("version.json"),
+        "DATA-LICENCE.txt" => dict!("DATA-LICENCE.txt"),
+        _ => return None,
+    })
 }
 
 fn imported(path: PathBuf) -> PlatformEvent {
@@ -63,17 +96,27 @@ fn imported(path: PathBuf) -> PlatformEvent {
 
 impl Platform for Desktop {
     fn data_dir(&self) -> PathBuf {
-        let base = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-            .unwrap_or_else(std::env::temp_dir);
-        let dir = base.join("rubiyomi");
+        let home = || std::env::var_os("HOME").map(PathBuf::from);
+        let base = if cfg!(windows) {
+            std::env::var_os("APPDATA").map(PathBuf::from)
+        } else if cfg!(target_os = "macos") {
+            home().map(|h| h.join("Library/Application Support"))
+        } else {
+            std::env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .or_else(|| home().map(|h| h.join(".local/share")))
+        };
+        let dir = base.unwrap_or_else(std::env::temp_dir).join(if cfg!(windows) { "Rubiyomi" } else { "rubiyomi" });
         let _ = std::fs::create_dir_all(&dir);
         dir
     }
 
     fn bundled(&self, name: &str) -> Option<Box<dyn Read + Send>> {
+        #[cfg(feature = "embed-dict")]
+        if let Some(bytes) = embedded(name) {
+            return Some(Box::new(std::io::Cursor::new(bytes)));
+        }
         let mut dirs = Vec::new();
         if let Some(env) = std::env::var_os("RUBIYOMI_DICT_DIR") {
             dirs.push(PathBuf::from(env));
@@ -115,7 +158,14 @@ impl Platform for Desktop {
     }
 
     fn open_url(&self, url: &str) -> bool {
-        for command in [&["xdg-open"][..], &["flatpak-spawn", "--host", "xdg-open"][..]] {
+        let openers: &[&[&str]] = if cfg!(windows) {
+            &[&["rundll32", "url.dll,FileProtocolHandler"]]
+        } else if cfg!(target_os = "macos") {
+            &[&["open"]]
+        } else {
+            &[&["xdg-open"], &["flatpak-spawn", "--host", "xdg-open"]]
+        };
+        for command in openers {
             let status = std::process::Command::new(command[0]).args(&command[1..]).arg(url).status();
             if status.is_ok_and(|s| s.success()) {
                 return true;

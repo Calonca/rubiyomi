@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Alessandro La Conca
 
 use egui::RichText;
-use egui_material_icons::icons::{ICON_AUTO_STORIES, ICON_DESCRIPTION, ICON_DICTIONARY, ICON_GAVEL, ICON_INFO, ICON_SCHOOL, ICON_SEGMENT};
+use egui_material_icons::icons::{
+    ICON_AUTO_STORIES, ICON_DESCRIPTION, ICON_DICTIONARY, ICON_GAVEL, ICON_INFO, ICON_PRIVACY_TIP, ICON_SCHOOL, ICON_SEGMENT, ICON_UPDATE,
+};
 use rubiyomi_core::dict::DictVersion;
 use rubiyomi_core::jpdb::JpdbClient;
 use rubiyomi_core::platform::Platform;
@@ -13,7 +15,9 @@ use super::reviews_form::{ReviewsForm, hint};
 use crate::reviews::{Reviews, Status};
 use crate::task::{self, Task};
 use crate::ui::m3::{self, c, font, text};
+use crate::updates::{Status as UpdateStatus, Updates};
 
+const PRIVACY: &str = "https://github.com/Calonca/rubiyomi/blob/main/PRIVACY.md";
 const IPADIC_NOTICE: &str = include_str!("../../notices/ipadic.txt");
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -26,6 +30,7 @@ enum Page {
     Reviews,
     Reading,
     Parsing,
+    Updates,
 }
 
 // Where the reader was going when the dialog about unsaved changes came up.
@@ -81,7 +86,7 @@ impl SettingsScreen {
     fn go_back(&mut self) -> bool {
         self.page = match self.page {
             Page::Main => return false,
-            Page::Reviews | Page::Reading | Page::Parsing => Page::Main,
+            Page::Reviews | Page::Reading | Page::Parsing | Page::Updates => Page::Main,
             Page::About => Page::Main,
             Page::Dictionary | Page::WordFinder => Page::About,
         };
@@ -96,6 +101,7 @@ impl SettingsScreen {
         s: &Scheme,
         platform: &dyn Platform,
         reviews: &mut Reviews,
+        updates: &mut Updates,
         dict: Option<DictVersion>,
         page: &mut PageSettings,
         colours_matter: bool,
@@ -109,6 +115,7 @@ impl SettingsScreen {
             Page::Reviews => "Reviews",
             Page::Reading => "Page",
             Page::Parsing => "Parsing",
+            Page::Updates => "Updates",
         };
         if m3::top_app_bar(ui, s, title, self.page != Page::Main) {
             self.back(reviews);
@@ -118,7 +125,8 @@ impl SettingsScreen {
         }
         egui::CentralPanel::default().frame(super::surface(s)).show(ui, |ui| {
             m3::scroll().show(ui, |ui| match self.page {
-                Page::Main => self.main(ui, s, reviews),
+                Page::Main => self.main(ui, s, platform, reviews, updates),
+                Page::Updates => updates_page(ui, s, updates),
                 Page::Reviews => self.reviews(ui, s, platform, reviews),
                 Page::Reading => changed = super::page_form::ui(ui, s, page, colours_matter),
                 Page::About => self.about(ui, s, dict.as_ref()),
@@ -138,7 +146,7 @@ impl SettingsScreen {
         changed
     }
 
-    fn main(&mut self, ui: &mut egui::Ui, s: &Scheme, reviews: &Reviews) {
+    fn main(&mut self, ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform, reviews: &Reviews, updates: &Updates) {
         m3::section_header(ui, s, "Reading");
         if m3::list_item(ui, s, ICON_AUTO_STORIES, "Page", "Theme, text size, furigana, vertical text", true).clicked() {
             self.page = Page::Reading;
@@ -166,6 +174,13 @@ impl SettingsScreen {
             .clicked()
         {
             self.page = Page::About;
+        }
+        privacy(ui, s, platform);
+        if updates.available() {
+            let summary = if updates.settings.check_on_start { "Checked when the app starts" } else { "Checked only when you ask" };
+            if m3::list_item(ui, s, ICON_UPDATE, "Updates", summary, true).clicked() {
+                self.page = Page::Updates;
+            }
         }
     }
 
@@ -352,6 +367,48 @@ fn dictionary(ui: &mut egui::Ui, s: &Scheme, dict: Option<&DictVersion>) {
             |d| format!("Installed: JMdict of {}, jmdict-simplified {}; mecab-ipadic {}.", d.jmdict_date, d.jmdict, d.ipadic),
         );
         words(ui, s, &installed);
+    });
+}
+
+fn privacy(ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform) {
+    if m3::list_item(ui, s, ICON_PRIVACY_TIP, "Privacy policy", "Opens in your browser", true).clicked() && !platform.open_url(PRIVACY) {
+        log::warn!("couldn't open {PRIVACY}");
+    }
+}
+
+fn updates_page(ui: &mut egui::Ui, s: &Scheme, updates: &mut Updates) {
+    let mut on = updates.settings.check_on_start;
+    if m3::switch_row(ui, s, "Check for updates when Rubiyomi starts", "", &mut on) {
+        updates.set_check_on_start(on);
+    }
+    prose(ui, |ui| {
+        hint(
+            ui,
+            s,
+            "The check asks GitHub for the latest Rubiyomi release, sending nothing else. It is the only time the app goes \
+             online on its own. A new version is downloaded only when you choose Update.",
+        );
+        ui.add_space(16.0);
+        let busy = matches!(updates.status, UpdateStatus::Checking | UpdateStatus::Downloading(_) | UpdateStatus::Done);
+        if !busy && m3::tonal_button(ui, s, "Check for updates").clicked() {
+            updates.check(ui.ctx());
+        }
+        ui.add_space(8.0);
+        match &updates.status {
+            UpdateStatus::Checking => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    hint(ui, s, "Asking GitHub…");
+                });
+            }
+            UpdateStatus::UpToDate => hint(ui, s, concat!("Rubiyomi ", env!("CARGO_PKG_VERSION"), " is the latest version.")),
+            UpdateStatus::Available(r) | UpdateStatus::Downloading(r) => hint(ui, s, &format!("Rubiyomi {} is available.", r.version())),
+            UpdateStatus::Failed(e, _) => {
+                ui.label(RichText::new(e).font(font(text::BODY_MEDIUM)).color(c(s.error)));
+                ui.hyperlink_to(link("Download it from GitHub"), rubiyomi_core::update::RELEASES);
+            }
+            UpdateStatus::Idle | UpdateStatus::Done => {}
+        }
     });
 }
 

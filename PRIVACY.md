@@ -1,6 +1,6 @@
 # Rubiyomi privacy policy
 
-Last updated: 25 October 2026.
+Last updated: 28 October 2026.
 
 Rubiyomi collects no data. It has no account, no analytics, no ads and no
 crash reporting, and its author receives nothing from it.
@@ -14,7 +14,27 @@ turned on, it may include them in your own Google backup; your keys are kept
 out of it.
 
 Your jpdb.io API key and AnkiConnect key are stored encrypted, with a key
-held in the Android Keystore (on Linux, in the desktop's secret service).
+held in the Android Keystore (on Linux, in the desktop's secret service; on
+Windows, in the Credential Manager).
+
+## The update check
+
+The desktop downloads from GitHub (the Linux AppImage and the Windows .exe)
+look for a newer version when they start. This is the one call Rubiyomi makes
+on its own:
+
+- **What it does.** It asks GitHub's public API for the latest Rubiyomi
+  release (`api.github.com/repos/Calonca/rubiyomi/releases/latest`).
+- **What it sends.** Nothing but a normal request: your IP address, as with
+  any connection, and `Rubiyomi/<version>` as the user agent. No identifier,
+  nothing about your books, words, stats or settings. GitHub's privacy
+  statement applies to the request.
+- **Updating.** Only when you choose Update does the app download the new
+  version from GitHub, and check it against its published SHA-256.
+- **Turning it off.** Settings → Updates → "Check for updates when Rubiyomi
+  starts". The "Check for updates" button there still works when you want it.
+- **Not on Android.** The Android app has no update check: the Play Store
+  updates it.
 
 ## What leaves your device, and only if you set it up
 
@@ -33,6 +53,8 @@ held in the Android Keystore (on Linux, in the desktop's secret service).
 
 The dictionary is bundled with the app, so unless you choose jpdb.io for
 parsing, looking words up never uses the internet.
+
+Settings → Privacy policy opens this page.
 
 ## Permissions
 
