@@ -309,7 +309,9 @@ impl Popup {
                 action = Some(Action::Act(a));
             }
         }
-        if has_card(self.state) {
+        // A grader that says why a word can't be graded shows its buttons disabled, with the reason.
+        let allowed = g.can_grade(word);
+        if has_card(self.state) || (self.state.is_some() && allowed.is_err()) {
             ui.add_space(8.0);
             let grades = g.grades();
             let gap = 4.0;
@@ -319,11 +321,15 @@ impl Popup {
                 ui.spacing_mut().item_spacing.x = gap;
                 for b in grades {
                     let colour = state_colour(grade_state(b.value, grades.len()), dark);
-                    if grade_button(ui, b.label, colour, bw, !self.busy) {
+                    if grade_button(ui, b.label, colour, bw, !self.busy && allowed.is_ok()) {
                         action = Some(Action::Grade(b.value));
                     }
                 }
             });
+            if let Err(why) = &allowed {
+                ui.add_space(4.0);
+                ui.label(RichText::new(why).size(12.0).color(c(s.on_surface_variant)));
+            }
         }
         action
     }

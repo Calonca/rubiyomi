@@ -6,11 +6,13 @@ use std::sync::{Arc, Mutex};
 use rubiyomi_core::grade::anki::connect::AnkiConnect;
 use rubiyomi_core::grade::anki::{AnkiBackend, AnkiGrader};
 use rubiyomi_core::grade::jpdb::JpdbGrader;
+use rubiyomi_core::grade::wanikani::WaniKaniGrader;
 use rubiyomi_core::grade::{GradeError, Grader};
 use rubiyomi_core::http;
 use rubiyomi_core::jpdb::JpdbClient;
 use rubiyomi_core::platform::Platform;
 use rubiyomi_core::settings::{Parser, ReviewSource, Settings};
+use rubiyomi_core::wanikani::WaniKaniClient;
 
 use crate::task::{self, Task};
 
@@ -122,6 +124,7 @@ impl Reviews {
             ReviewSource::None => return "Off: words aren't coloured".into(),
             ReviewSource::Jpdb => "jpdb.io",
             ReviewSource::Anki => "Anki",
+            ReviewSource::WaniKani => "WaniKani",
         };
         match &self.status {
             Status::Off => format!("{name}: not set up"),
@@ -155,5 +158,7 @@ fn grader(platform: &dyn Platform, settings: &Settings) -> Option<Arc<dyn Grader
         ReviewSource::Anki => {
             Some(Arc::new(AnkiGrader::new(anki_backend(platform, settings), settings.anki.clone()).saved_in(&platform.data_dir())))
         }
+        ReviewSource::WaniKani if settings.wanikani_token.trim().is_empty() => None,
+        ReviewSource::WaniKani => Some(Arc::new(WaniKaniGrader::new(WaniKaniClient::new(&settings.wanikani_token), &platform.data_dir()))),
     }
 }

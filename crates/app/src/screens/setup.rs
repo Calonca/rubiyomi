@@ -71,7 +71,7 @@ impl Setup {
     fn reviews(&mut self, ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform, reviews: &mut Reviews) -> bool {
         ui.label(RichText::new("Reviews").font(font(text::HEADLINE_SMALL)).color(c(s.on_surface)));
         ui.add_space(4.0);
-        hint(ui, s, "Do you study with jpdb.io or Anki?");
+        hint(ui, s, "Do you study with jpdb.io, Anki or WaniKani?");
         ui.add_space(16.0);
         self.form.ui(ui, s, platform);
         if self.form.draft.reviews == ReviewSource::Jpdb {
