@@ -1,19 +1,50 @@
 # Rubiyomi
 
-![Rubiyomi](art/icon-512.png)
+<img src="art/icon-512.png" width="128" alt="Rubiyomi">
 
-A simple app for reading Japanese books in EPUB, on Android, Linux and
-Windows.
+A reader for Japanese EPUB books. Words are coloured by your Anki or jpdb.io
+cards, so you see at a glance what you know; tap one for its reading and
+meanings, and grade or add its card without leaving the page. The dictionary
+is built in and works offline.
+
+<!-- The promo video goes here: drag the .mp4 into this spot in github.com's editor. -->
+
+
+https://github.com/user-attachments/assets/31a4f6e5-a92a-47f0-b96e-b2b12c2af77e
+
+
+
+<p>
+  <img src="https://github.com/user-attachments/assets/8aaf9d79-5f65-4f47-bfcf-4b9fb8b80120" width="200" alt="Tap a word for its reading and meanings">
+  <img src="https://github.com/user-attachments/assets/d26624cd-ed7c-41d9-9c6f-490bcce3f4cc" width="200" alt="Words coloured by your Anki or jpdb.io cards">
+  <img src="https://github.com/user-attachments/assets/90365757-4352-4104-8c1b-efc69c2305ba" width="200" alt="The library of EPUB books">
+  <img src="https://github.com/user-attachments/assets/f3c0c159-cd3f-4289-baa0-e982b71d1a2d" width="200" alt="Vertical text and page themes">
+</p>
+
+## Get it
+
+**Android**, on Google Play (closed test). Start here:
+
+### [➜ Join the tester group](https://groups.google.com/g/rubiyomi-testers)
+
+Then open the [testing page](https://play.google.com/apps/testing/dev.calonca.rubiyomi),
+tap *Become a tester* and install. The testing page works only after you've
+joined the group ([all the steps](#google-play)).
+
+- **Windows, Linux**, and the Android APK: the
+  [latest release](https://github.com/Calonca/rubiyomi/releases/latest).
+- **Mac and iOS:** coming.
 
 ## Download
 
 From the [latest release](https://github.com/Calonca/rubiyomi/releases/latest):
 
-- **Android:** from Google Play, or `Rubiyomi-<version>.apk` to install it
-  yourself (Android asks you to allow installing apps from wherever you opened
-  it). The APK doesn't update itself; Google Play and the APK are signed with
-  different keys, so one can't update the other: to switch, uninstall first
-  (which removes your books and stats from the device).
+- **Android:** from [Google Play](#google-play), or `Rubiyomi-<version>.apk`
+  to install it yourself (Android asks you to allow installing apps from
+  wherever you opened it). The APK doesn't update itself; Google Play and the
+  APK are signed with different keys, so one can't update the other: to
+  switch, uninstall first (which removes your books and stats from the
+  device).
 - **Linux:** `Rubiyomi-<version>-x86_64.AppImage`. Make it executable
   (`chmod +x`, or Properties → Executable in your file manager) and run it.
 - **Windows:** `Rubiyomi-<version>-x86_64.exe`. One file, nothing to install:
@@ -24,6 +55,20 @@ The AppImage and the `.exe` look for a new version when they start and offer
 it in a pop-up: Update downloads it beside the running file, checks its
 SHA-256 and restarts into it, removing the old file. The check can be turned
 off under Settings → Updates.
+
+### Google Play
+
+The app is in closed testing on Google Play. To join:
+
+1. **[Join the rubiyomi-testers group](https://groups.google.com/g/rubiyomi-testers)**
+   with the Google account you use on the phone's Play Store.
+2. Open the [testing page](https://play.google.com/apps/testing/dev.calonca.rubiyomi)
+   and tap *Become a tester* (it can take a few minutes after joining the
+   group).
+3. Install it from Google Play through the link on that page.
+
+Please keep it installed for two weeks, and report what breaks in the
+[issues](https://github.com/Calonca/rubiyomi/issues).
 
 ## Features
 
