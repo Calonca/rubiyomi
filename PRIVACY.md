@@ -13,7 +13,7 @@ your device. Uninstalling the app deletes them. If you have Android's backup
 turned on, it may include them in your own Google backup; your keys are kept
 out of it.
 
-Your jpdb.io API key and AnkiConnect key are stored encrypted, with a key
+Your jpdb.io API key, AnkiConnect key and WaniKani token are stored encrypted, with a key
 held in the Android Keystore (on Linux, in the desktop's secret service; on
 Windows, in the Credential Manager).
 
@@ -49,7 +49,12 @@ on its own:
   AnkiDroid on the same phone (with the permission you grant), or through
   AnkiConnect at the address you enter on a computer. Nothing goes to a server
   unless that address is one.
-- **Links.** "Open on jpdb.io" and other links open in your browser.
+- **WaniKani.** If you choose WaniKani, Rubiyomi sends your API token to
+  WaniKani to download its vocabulary and your progress on it, which are kept
+  on the device to colour words; nothing from your books is sent. When you
+  grade a word, it sends that review (the item and whether you got it right).
+  WaniKani's own privacy policy applies to what it receives.
+- **Links.** "Open on jpdb.io", "Open on WaniKani" and other links open in your browser.
 
 The dictionary is bundled with the app, so unless you choose jpdb.io for
 parsing, looking words up never uses the internet.
@@ -58,7 +63,7 @@ Settings → Privacy policy opens this page.
 
 ## Permissions
 
-- *Internet*: only for jpdb.io or AnkiConnect, as above.
+- *Internet*: only for jpdb.io, WaniKani or AnkiConnect, as above.
 - *AnkiDroid database*: only if you choose Anki on the phone.
 
 ## Contact
