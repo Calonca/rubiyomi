@@ -7,12 +7,7 @@ cards, so you see at a glance what you know; tap one for its reading and
 meanings, and grade or add its card without leaving the page. The dictionary
 is built in and works offline.
 
-<!-- The promo video goes here: drag the .mp4 into this spot in github.com's editor. -->
-
-
 https://github.com/user-attachments/assets/31a4f6e5-a92a-47f0-b96e-b2b12c2af77e
-
-
 
 <p>
   <img src="https://github.com/user-attachments/assets/8aaf9d79-5f65-4f47-bfcf-4b9fb8b80120" width="200" alt="Tap a word for its reading and meanings">
