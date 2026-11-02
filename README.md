@@ -68,8 +68,9 @@ Please keep it installed for two weeks, and report what breaks in the
 ## Features
 
 - **Your cards on the page.** Words are coloured by your cards on Anki
-  (AnkiDroid or AnkiConnect) or jpdb.io, so you see at a glance what you
-  already know.
+  (AnkiDroid or AnkiConnect) or jpdb.io, or by their stage on WaniKani, so
+  you see at a glance what you already know. Due WaniKani words can be
+  reviewed from the word card.
 - **Tap a word** for its reading and meanings, and grade, add or suspend its
   card without leaving the page. The card is placed so it doesn't cover the
   sentence you're reading; tap another word to move it there, or the same
@@ -139,7 +140,7 @@ There is no macOS download; build it from source:
    it as `dict`.
 
 A source build, on any system, has no update check: to update, `git pull` and
-build again. Your jpdb.io and AnkiConnect keys are kept in a file only your
+build again. Your jpdb.io, AnkiConnect and WaniKani keys are kept in a file only your
 user can read, as the macOS Keychain isn't used yet.
 
 A `v*` tag builds the APK, the Play bundle, the AppImage and the `.exe` on

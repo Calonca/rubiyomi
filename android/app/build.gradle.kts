@@ -42,6 +42,11 @@ android {
     }
 
     buildTypes {
+        // A separate app, so a test build installs next to the one from Google Play.
+        debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+        }
         release {
             isMinifyEnabled = false
             signingConfig = if (releaseStore != null) {

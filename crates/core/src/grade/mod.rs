@@ -3,6 +3,7 @@
 
 pub mod anki;
 pub mod jpdb;
+pub mod wanikani;
 
 use std::collections::HashMap;
 
@@ -72,6 +73,13 @@ pub trait Grader: Send + Sync {
     // Asks for fresh states of these words, for the next `states`.
     fn refresh(&self, words: &[Word]) -> Result<(), GradeError> {
         let _ = words;
+        Ok(())
+    }
+
+    // Whether the word's card can be graded now; the reason it can't, to show
+    // under the disabled buttons.
+    fn can_grade(&self, word: &Word) -> Result<(), String> {
+        let _ = word;
         Ok(())
     }
 

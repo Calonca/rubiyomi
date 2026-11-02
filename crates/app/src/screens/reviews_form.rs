@@ -9,6 +9,7 @@ use rubiyomi_core::jpdb::{Deck, JpdbClient};
 use rubiyomi_core::platform::Platform;
 use rubiyomi_core::settings::{ReviewSource, Settings};
 use rubiyomi_core::theme::Scheme;
+use rubiyomi_core::wanikani::{TOKENS_URL, WaniKaniClient};
 
 use crate::reviews;
 use crate::task::{self, Task};
@@ -17,6 +18,8 @@ use crate::ui::m3::{self, c, font, text};
 type AnkiLists = (Vec<String>, Vec<String>);
 type Inspected = Result<Vec<InDeck>, String>;
 type Fields = (String, Result<Vec<String>, String>);
+// The token asked with, and who WaniKani says it belongs to.
+type SignedIn = (String, Result<String, String>);
 
 // Where reviews come from, as Settings and the first-launch setup both ask it.
 // Decks and note types load by themselves once there is enough to ask with.
@@ -37,6 +40,8 @@ pub struct ReviewsForm {
     inspecting: Option<Task<Inspected>>,
     // The deck whose note type and fields were last chosen automatically.
     picked_for: String,
+    signed_in: Option<SignedIn>,
+    signing_in: Option<Task<SignedIn>>,
 }
 
 impl ReviewsForm {
@@ -57,6 +62,9 @@ impl ReviewsForm {
         if let Some(i) = task::take(&mut self.inspecting) {
             self.inspected = Some(i);
         }
+        if let Some(u) = task::take(&mut self.signing_in) {
+            self.signed_in = Some(u);
+        }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform) {
@@ -68,15 +76,69 @@ impl ReviewsForm {
         );
         ui.add_space(12.0);
         let mut i = self.draft.reviews as usize;
-        if m3::segmented(ui, s, &["None", "jpdb.io", "Anki"], &mut i) {
-            self.draft.reviews = [ReviewSource::None, ReviewSource::Jpdb, ReviewSource::Anki][i];
+        if m3::segmented(ui, s, &["None", "jpdb.io", "Anki", "WaniKani"], &mut i) {
+            self.draft.reviews = [ReviewSource::None, ReviewSource::Jpdb, ReviewSource::Anki, ReviewSource::WaniKani][i];
         }
         ui.add_space(12.0);
         match self.draft.reviews {
             ReviewSource::None => hint(ui, s, "Words aren't coloured, and there are no review buttons."),
             ReviewSource::Jpdb => self.jpdb(ui, s, platform),
             ReviewSource::Anki => self.anki(ui, s, platform),
+            ReviewSource::WaniKani => self.wanikani(ui, s, platform),
         }
+    }
+
+    fn wanikani(&mut self, ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform) {
+        let (field, cleared) = token_field(
+            ui,
+            s,
+            platform,
+            &mut self.draft.wanikani_token,
+            TokenField {
+                label: "API token",
+                before: "Make one on ",
+                link: "WaniKani's Personal Access Tokens page",
+                url: TOKENS_URL,
+                after: ", with reviews:create ticked so the word card can send reviews. It is kept in the system's keyring, never in Rubiyomi's files.",
+                clear: "Clear token",
+            },
+        );
+        if cleared {
+            self.signed_in = None;
+        }
+        let token = self.draft.wanikani_token.trim().to_owned();
+        let fresh = self.signed_in.as_ref().is_some_and(|(t, _)| *t == token);
+        if !field.has_focus() && !token.is_empty() && !fresh && self.signing_in.is_none() {
+            let (client, token) = (WaniKaniClient::new(&token), token.clone());
+            self.signing_in = Some(Task::spawn(ui.ctx(), move || {
+                let who = client.user().map(|u| {
+                    let free = if u.max_level < u.level { format!(" (your plan opens levels 1–{})", u.max_level) } else { String::new() };
+                    format!("Signed in as {}, level {}{free}.", u.username, u.level)
+                });
+                (token, who.map_err(|e| e.to_string()))
+            }));
+        }
+        ui.add_space(8.0);
+        match &self.signed_in {
+            _ if self.signing_in.is_some() => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    hint(ui, s, "Asking WaniKani…");
+                });
+            }
+            Some((t, Ok(who))) if *t == token => hint(ui, s, who),
+            Some((t, Err(e))) if *t == token => {
+                ui.label(RichText::new(e).font(font(text::BODY_MEDIUM)).color(c(s.error)));
+            }
+            _ => {}
+        }
+        ui.add_space(8.0);
+        hint(
+            ui,
+            s,
+            "Words WaniKani teaches take the colour of their stage. A word can be reviewed from its card when it's due; \
+             nothing is queued while offline.",
+        );
     }
 
     fn jpdb(&mut self, ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform) {
@@ -412,26 +474,51 @@ fn labelled_combo(ui: &mut egui::Ui, id: &str, value: &mut String, options: &[(S
 
 // The jpdb.io key, with where to find it; says whether Clear was pressed.
 pub fn jpdb_key_field(ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform, key: &mut String) -> (egui::Response, bool) {
-    label(ui, "API key");
+    token_field(
+        ui,
+        s,
+        platform,
+        key,
+        TokenField {
+            label: "API key",
+            before: "Copy it from the bottom of ",
+            link: "jpdb.io's settings page",
+            url: "https://jpdb.io/settings",
+            after: ". It is kept in the system's keyring, never in Rubiyomi's files.",
+            clear: "Clear key",
+        },
+    )
+}
+
+// What a service's key field says: its name, and where the key is found.
+pub struct TokenField<'a> {
+    pub label: &'a str,
+    pub before: &'a str,
+    pub link: &'a str,
+    pub url: &'a str,
+    pub after: &'a str,
+    pub clear: &'a str,
+}
+
+// A key pasted from a service's site; says whether Clear was pressed.
+pub fn token_field(ui: &mut egui::Ui, s: &Scheme, platform: &dyn Platform, key: &mut String, t: TokenField) -> (egui::Response, bool) {
+    label(ui, t.label);
     ui.scope(|ui| {
         // Wrapped lines are otherwise a touch target's height apart.
         ui.spacing_mut().interact_size.y = 0.0;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            hint(ui, s, "Copy it from the bottom of ");
-            ui.hyperlink_to(
-                RichText::new("jpdb.io's settings page").font(font(text::BODY_MEDIUM)).color(c(s.primary)).underline(),
-                "https://jpdb.io/settings",
-            );
-            hint(ui, s, ". It is kept in the system's keyring, never in Rubiyomi's files.");
+            hint(ui, s, t.before);
+            ui.hyperlink_to(RichText::new(t.link).font(font(text::BODY_MEDIUM)).color(c(s.primary)).underline(), t.url);
+            hint(ui, s, t.after);
         });
     });
     ui.add_space(4.0);
     let paste = || platform.clipboard_text();
     let paste = platform.can_paste().then_some(&paste as &dyn Fn() -> Option<String>);
-    let field = m3::text_field(ui, s, key, "API key", true, paste);
+    let field = m3::text_field(ui, s, key, t.label, true, paste);
     let mut cleared = false;
-    if !key.is_empty() && m3::trailing_text_button(ui, s, "Clear key").clicked() {
+    if !key.is_empty() && m3::trailing_text_button(ui, s, t.clear).clicked() {
         key.clear();
         cleared = true;
     }

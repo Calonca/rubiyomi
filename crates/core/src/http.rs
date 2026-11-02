@@ -29,6 +29,12 @@ pub struct Unreachable(pub String);
 
 pub trait Transport: Send + Sync {
     fn post(&self, request: &Request) -> Result<Response, Unreachable>;
+
+    // The body is ignored.
+    fn get(&self, request: &Request) -> Result<Response, Unreachable> {
+        let _ = request;
+        Err(Unreachable("GET isn't supported here".into()))
+    }
 }
 
 struct Ureq(ureq::Agent);
@@ -39,12 +45,24 @@ impl Transport for Ureq {
         for (k, v) in &r.headers {
             b = b.header(k, v);
         }
-        let mut response = b.send(r.body.as_bytes()).map_err(|e| Unreachable(e.to_string()))?;
-        let status = response.status().as_u16();
-        let retry_after = response.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
-        let body = response.body_mut().read_to_string().unwrap_or_default();
-        Ok(Response { status, body, retry_after })
+        answer(b.send(r.body.as_bytes()))
     }
+
+    fn get(&self, r: &Request) -> Result<Response, Unreachable> {
+        let mut b = self.0.get(&r.url);
+        for (k, v) in &r.headers {
+            b = b.header(k, v);
+        }
+        answer(b.call())
+    }
+}
+
+fn answer(sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Response, Unreachable> {
+    let mut response = sent.map_err(|e| Unreachable(e.to_string()))?;
+    let status = response.status().as_u16();
+    let retry_after = response.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
+    let body = response.body_mut().read_to_string().unwrap_or_default();
+    Ok(Response { status, body, retry_after })
 }
 
 pub fn transport() -> Arc<dyn Transport> {
@@ -92,6 +110,11 @@ mod mock {
         fn post(&self, request: &Request) -> Result<Response, Unreachable> {
             self.requests.lock().unwrap().push(request.clone());
             (self.handler)(request)
+        }
+
+        // Told from a POST by its empty body.
+        fn get(&self, request: &Request) -> Result<Response, Unreachable> {
+            self.post(request)
         }
     }
 }

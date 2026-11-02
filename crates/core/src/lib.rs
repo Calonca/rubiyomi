@@ -18,6 +18,7 @@ pub mod stats;
 pub mod text;
 pub mod theme;
 pub mod update;
+pub mod wanikani;
 
 #[cfg(test)]
 mod testing;

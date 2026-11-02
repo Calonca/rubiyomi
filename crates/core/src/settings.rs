@@ -11,6 +11,7 @@ use crate::platform::Platform;
 
 const JPDB_KEY: &str = "jpdb-key";
 const ANKI_KEY: &str = "anki-key";
+const WANIKANI_TOKEN: &str = "wanikani-token";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -19,6 +20,9 @@ pub enum ReviewSource {
     None,
     Jpdb,
     Anki,
+    // After Anki: the settings' segmented control is indexed by this order.
+    #[serde(rename = "wanikani")]
+    WaniKani,
 }
 
 // Who finds the words in the text: the dictionaries on the device, or jpdb.io.
@@ -44,6 +48,8 @@ pub struct Settings {
     pub anki_key: String,
     pub anki: AnkiMapping,
     pub parser: Parser,
+    #[serde(skip)]
+    pub wanikani_token: String,
 }
 
 impl Settings {
@@ -55,13 +61,15 @@ impl Settings {
         let mut me: Settings = read_json_or_default(&Self::path(&platform.data_dir()));
         me.jpdb_key = platform.secret(JPDB_KEY).unwrap_or_default();
         me.anki_key = platform.secret(ANKI_KEY).unwrap_or_default();
+        me.wanikani_token = platform.secret(WANIKANI_TOKEN).unwrap_or_default();
         me
     }
 
     pub fn save(&self, platform: &dyn Platform) -> Result<(), String> {
         write_json(&Self::path(&platform.data_dir()), self).map_err(|e| e.to_string())?;
         platform.set_secret(JPDB_KEY, self.jpdb_key.trim())?;
-        platform.set_secret(ANKI_KEY, self.anki_key.trim())
+        platform.set_secret(ANKI_KEY, self.anki_key.trim())?;
+        platform.set_secret(WANIKANI_TOKEN, self.wanikani_token.trim())
     }
 }
 
@@ -71,7 +79,13 @@ mod tests {
 
     #[test]
     fn keys_never_reach_the_file() {
-        let s = Settings { jpdb_key: "secret-jpdb".into(), anki_key: "secret-anki".into(), jpdb_deck: "5".into(), ..Settings::default() };
+        let s = Settings {
+            jpdb_key: "secret-jpdb".into(),
+            anki_key: "secret-anki".into(),
+            wanikani_token: "secret-wk".into(),
+            jpdb_deck: "5".into(),
+            ..Settings::default()
+        };
         let json = serde_json::to_string(&s).unwrap();
         assert!(!json.contains("secret"), "{json}");
         assert!(json.contains("\"5\""));
