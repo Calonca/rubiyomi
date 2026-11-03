@@ -7,10 +7,10 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 
 // Bump to the newest jmdict-simplified English release before each Rubiyomi release.
-const JMDICT_VERSION: &str = "3.6.2+20261019180022";
+const JMDICT_VERSION: &str = "3.6.2+20261102210542";
 const JMDICT_URL: &str =
-    "https://github.com/scriptin/jmdict-simplified/releases/download/3.6.2%2B20261019180022/jmdict-eng-3.6.2%2B20261019180022.json.tgz";
-const JMDICT_SHA256: &str = "1dca86908663dcddb8c3bcff9dc5e2bc73037bbdeed9c705c896a3845e7635a5";
+    "https://github.com/scriptin/jmdict-simplified/releases/download/3.6.2%2B20261102210542/jmdict-eng-3.6.2%2B20261102210542.json.tgz";
+const JMDICT_SHA256: &str = "bc1c5240dbdb755a00db488dc74ebfc6c33ffc014d261d64b605fd45cc1dbbb5";
 
 const IPADIC_VERSION: &str = "2.7.0-20250920";
 
