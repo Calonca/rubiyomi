@@ -3202,7 +3202,7 @@ dependencies = [
 
 [[package]]
 name = "rubiyomi"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "env_logger",
  "keyring-core",
@@ -3221,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "rubiyomi-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "image",
@@ -4675,7 +4675,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "lindera-ipadic",
  "rubiyomi-core",
