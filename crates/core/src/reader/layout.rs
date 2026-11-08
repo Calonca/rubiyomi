@@ -131,6 +131,8 @@ pub struct PlacedRuby {
     pub size: f32,
     pub block: usize,
     pub run: usize,
+    // Where the text it stands over starts, as a chapter offset.
+    pub offset: usize,
     pub generated: bool,
 }
 
@@ -573,6 +575,7 @@ fn place_line(page: &mut Page, line: &Line, cross: f32, pitch: f32, cfg: &Layout
                 size: ruby_size,
                 block: line.block,
                 run: r.run,
+                offset: unit.glyphs.first().map_or(0, |g| g.offset),
                 generated: r.generated,
             });
         }

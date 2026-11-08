@@ -18,10 +18,10 @@ use nsh_core::prelude::*;
 use nsh_core::{TouchEvent, TouchPhase};
 use rubiyomi_core::library::{BookId, BookMeta, Progress, fsutil::now};
 use rubiyomi_core::platform::Platform;
-use rubiyomi_core::reader::layout::{LayoutBlock, LayoutConfig, Page, layout, page_for_offset};
+use rubiyomi_core::reader::layout::{FixedMeasure, LayoutBlock, LayoutConfig, Page, layout, page_for_offset};
 use rubiyomi_core::reader::runs::{Run, book_runs};
 use rubiyomi_core::settings::{Furigana, PageSettings, Typeface};
-use rubiyomi_core::text::{Block, Chapter};
+use rubiyomi_core::text::{Block, Chapter, TextBlock};
 use rubiyomi_core::theme::Scheme;
 
 use crate::app::{Route, Shared, route, shared};
@@ -72,8 +72,10 @@ fn config(width: f32, height: f32, p: &PageSettings) -> LayoutConfig {
     }
 }
 
-fn pages_of(chapter: &Chapter, cfg: &LayoutConfig, measure: &NshMeasure) -> Vec<Page> {
-    let runs: Vec<Vec<Run>> = chapter.blocks.iter().map(|b| b.as_text().map(book_runs).unwrap_or_default()).collect();
+// Without the book's readings, the lines keep their room for the dictionary's.
+fn pages_of(chapter: &Chapter, cfg: &LayoutConfig, book_ruby: bool, measure: &NshMeasure) -> Vec<Page> {
+    let runs_of = |t: &TextBlock| if book_ruby { book_runs(t) } else { vec![Run { start: 0, len: t.char_len(), ..Run::default() }] };
+    let runs: Vec<Vec<Run>> = chapter.blocks.iter().map(|b| b.as_text().map(runs_of).unwrap_or_default()).collect();
     let mut start = 0;
     let mut blocks = Vec::with_capacity(chapter.blocks.len());
     for (i, b) in chapter.blocks.iter().enumerate() {
@@ -200,6 +202,7 @@ struct LaidFor {
     opening: u64,
     cfg: LayoutConfig,
     typeface: Typeface,
+    book_ruby: bool,
 }
 
 impl Laid {
@@ -327,19 +330,20 @@ impl ReaderState {
 
     fn lay_out(&self, measures: &[NshMeasure; 2]) {
         let (width, height) = self.size.get();
-        let (cfg, typeface, vertical) = self.shared.page.with(|p| (config(width, height, p), p.typeface, p.vertical));
+        let (cfg, typeface, vertical, book_ruby) =
+            self.shared.page.with(|p| (config(width, height, p), p.typeface, p.vertical, p.furigana != Furigana::Dictionary));
         let chapter = self.chapter.get();
         let index = self.index.get_untracked();
         if width <= 0.0 {
             return;
         }
-        let made_for = LaidFor { chapter: index, opening: self.opening.get(), cfg, typeface };
+        let made_for = LaidFor { chapter: index, opening: self.opening.get(), cfg, typeface, book_ruby };
         if self.laid.with_untracked(|l| l.as_ref().is_some_and(|l| l.made_for == made_for)) {
             return;
         }
         let started = Instant::now();
         let measure = &measures[(typeface == Typeface::Serif) as usize];
-        let pages = pages_of(&chapter, &cfg, measure);
+        let pages = pages_of(&chapter, &cfg, book_ruby, measure);
         log::info!("laid out chapter {index}: {} chars into {} pages in {:?}", chapter.char_len(), pages.len(), started.elapsed());
         // The word marked on the page shown, as after a look-up, stays in sight when the page is
         // laid out again, as on turning the phone; else the page's first line does.
@@ -537,7 +541,7 @@ fn word_at(page: &Page, x: f32, y: f32, slop: f32) -> Option<(usize, usize)> {
         return Some((g.block, g.offset));
     }
     let ruby = page.ruby.iter().find(|r| r.rect.contains(x, y))?;
-    page.glyphs.iter().find(|g| g.block == ruby.block && g.run == ruby.run).map(|g| (g.block, g.offset))
+    Some((ruby.block, ruby.offset))
 }
 
 fn page_row(state: &ReaderState, laid: &Rc<Laid>, at: usize) -> AnyElement {
@@ -561,7 +565,17 @@ fn page_row(state: &ReaderState, laid: &Rc<Laid>, at: usize) -> AnyElement {
     let on_tap: PageTap = Rc::new(move |x, y| tapped.tap(&shown, at, x + margin, y + margin));
     let page_ink = state.page_ink();
     let ink = move |_, offset| page_ink.at(offset);
-    page_view(&laid.pages[at], &style, &ink, on_tap, file_of).left(px(margin)).top(px(margin)).into_element()
+    let page = &laid.pages[at];
+    // Their extent only sizes what's drawn centred over the word, so any measure will do.
+    let mut readings = if state.shared.page.with(|p| p.furigana == Furigana::Dictionary) {
+        let index = state.index.get_untracked();
+        let words = state.words.colours.get().filter(|c| c.index == index);
+        words.map(|c| rubiyomi_core::furigana::on_page(page, &c.words, &laid.cfg, &FixedMeasure)).unwrap_or_default()
+    } else {
+        page.ruby.clone()
+    };
+    rubiyomi_core::furigana::fit(&mut readings, laid.cfg.vertical);
+    page_view(page, &readings, &style, &ink, on_tap, file_of).left(px(margin)).top(px(margin)).into_element()
 }
 
 fn next_chapter_row(state: &ReaderState, index: usize) -> AnyElement {
@@ -1014,7 +1028,10 @@ pub fn screen(id: BookId) -> impl IntoElement {
     }
     {
         let state = state.clone();
-        effect(move || state.colour());
+        let page = state.shared.page;
+        // Apart, so the rest of the page's settings don't find the words again.
+        let for_furigana = computed(move || page.with(|p| p.furigana == Furigana::Dictionary));
+        effect(move || state.colour(for_furigana.get()));
     }
     state.watch_skimming();
     #[cfg(not(target_os = "android"))]
@@ -1147,7 +1164,7 @@ mod tests {
     #[test]
     fn opening_a_chapter_again_is_a_new_layout_that_lands_on_its_start() {
         let pages = vec![Page { start: 0, end: 10, ..Page::default() }, Page { start: 10, end: 20, ..Page::default() }];
-        let shown = LaidFor { chapter: 3, opening: 1, cfg: LayoutConfig::default(), typeface: Typeface::Sans };
+        let shown = LaidFor { chapter: 3, opening: 1, cfg: LayoutConfig::default(), typeface: Typeface::Sans, book_ruby: true };
         assert_ne!(shown, LaidFor { opening: 2, ..shown });
         assert_eq!(landing(&pages, Place::Offset(0)), (0, Place::Offset(0)));
     }

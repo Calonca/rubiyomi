@@ -282,9 +282,10 @@ fn column_line(rect: Rect, size: f32, colour: Color) -> AnyElement {
         .into_element()
 }
 
-fn reading(ruby: &PlacedRuby, style: &PageStyle) -> AnyElement {
+// In the colour of the word under it, when words are coloured.
+fn reading(ruby: &PlacedRuby, style: &PageStyle, ink: InkOf) -> AnyElement {
     let r = ruby.rect;
-    let color = style.ruby;
+    let color = ink(ruby.block, ruby.offset).colour.map_or(style.ruby, c);
     if style.vertical {
         let column = ruby.text.chars().map(|ch| {
             row_text(ch.to_string(), ruby.size, style.family, color).text_center().w_full().h(px(ruby.size)).line_height(px(ruby.size))
@@ -308,7 +309,15 @@ fn reading(ruby: &PlacedRuby, style: &PageStyle) -> AnyElement {
 pub type PageTap = Rc<dyn Fn(f32, f32)>;
 
 // One selectable page. `file_of` finds where an image block's picture is on disk.
-pub fn page_view(page: &Page, style: &PageStyle, ink: InkOf, on_tap: PageTap, file_of: impl Fn(usize) -> Option<String>) -> View {
+// `readings` are the page's, or others in place of them.
+pub fn page_view(
+    page: &Page,
+    readings: &[PlacedRuby],
+    style: &PageStyle,
+    ink: InkOf,
+    on_tap: PageTap,
+    file_of: impl Fn(usize) -> Option<String>,
+) -> View {
     let mut out = Vec::new();
     let lines = if style.vertical { column_lines(page) } else { lines(page) };
     let mut follows = false;
@@ -322,7 +331,7 @@ pub fn page_view(page: &Page, style: &PageStyle, ink: InkOf, on_tap: PageTap, fi
         out.push(if style.vertical { glyph(line, follows, style, ink, &on_tap) } else { row(line, follows, style, ink, &on_tap) });
         follows = joins_next;
     }
-    out.extend(page.ruby.iter().map(|r| reading(r, style)));
+    out.extend(readings.iter().map(|r| reading(r, style, ink)));
     out.extend(page.images.iter().filter_map(|i| {
         let path = file_of(i.block)?;
         Some(image(path).absolute().left(px(i.rect.x)).top(px(i.rect.y)).w(px(i.rect.w)).h(px(i.rect.h)).into_element())

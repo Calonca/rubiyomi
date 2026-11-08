@@ -145,14 +145,16 @@ impl PageTheme {
     }
 }
 
-// Furigana drawn always, never (taking no room), or faint until the word is looked up.
+// The book's furigana drawn always, never (taking no room), or faint until the word is looked up;
+// or the dictionary's over every word with kanji, in place of the book's.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Furigana {
-    #[default]
     Show,
     Hide,
     Blur,
+    #[default]
+    Dictionary,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,7 +234,7 @@ impl Default for PageSettings {
             margin: 24.0,
             max_chars_per_line: 0,
             typeface: Typeface::Sans,
-            furigana: Furigana::Show,
+            furigana: Furigana::Dictionary,
             colours: WordColours::Text,
             palette: WordPalette::Full,
             custom_colours: CustomColours::new(),

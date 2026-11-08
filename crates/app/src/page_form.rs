@@ -96,10 +96,10 @@ pub fn form(
         ))
         .child(ui::segmented(
             Some("Furigana"),
-            &["Show", "Hide"],
-            &[Furigana::Show, Furigana::Hide],
-            // A saved "blur" (the old app's Faint) shows the readings, so it reads as Show.
-            move || page.with(|p| if p.furigana == Furigana::Hide { Furigana::Hide } else { Furigana::Show }),
+            &["Hide", "Book", "Dictionary"],
+            &[Furigana::Hide, Furigana::Show, Furigana::Dictionary],
+            // A saved "blur" (the old app's Faint) shows the book's readings, so it reads as Book.
+            move || page.with(|p| if p.furigana == Furigana::Blur { Furigana::Show } else { p.furigana }),
             move |v| page.update(|p| p.furigana = v),
         ))
         .child(dynamic(move || {

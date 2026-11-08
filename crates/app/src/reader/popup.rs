@@ -690,20 +690,8 @@ fn card_content(state: &ReaderState, popup: &Popup, s: Scheme, grader: Option<Ar
     };
     let flip = state.clone();
     let options = popup.options;
-    let head = view()
-        .flex_row()
-        .items_start()
-        .child(
-            view()
-                .flex_1()
-                .selectable(true)
-                .children(
-                    (!word.reading.is_empty() && word.reading != word.spelling)
-                        .then(|| text(word.reading.clone()).text_size(px(13.0)).text_color(c(s.on_surface_variant))),
-                )
-                .child(text(word.spelling.clone()).text_size(px(30.0)).text_color(c(s.on_surface))),
-        )
-        .child(
+    let head =
+        view().flex_row().items_start().child(view().flex_1().selectable(true).child(spelt(&word.spelling, &word.reading, s))).child(
             view()
                 .w(px(48.0))
                 .h(px(48.0))
@@ -755,6 +743,24 @@ pub fn popup(state: &ReaderState) -> impl IntoElement {
         }
         fill_parent().pointer_events(PointerEvents::BoxNone).child(card(&state)).into_element()
     })
+}
+
+// The word with its reading over each run of kanji alone, or over all of it when they can't be
+// told apart.
+fn spelt(spelling: &str, reading: &str, s: Scheme) -> AnyElement {
+    let (ink, faint) = (c(s.on_surface), c(s.on_surface_variant));
+    let over = |r: &str| text(r.to_owned()).text_size(px(13.0)).line_height(px(18.0)).h(px(18.0)).text_color(faint).select_none();
+    let big = |t: &str| text(t.to_owned()).text_size(px(30.0)).text_color(ink);
+    match rubiyomi_core::furigana::parts(spelling, reading) {
+        Some(parts) => view()
+            .flex_row()
+            .items_end()
+            .children(parts.into_iter().map(|p| {
+                view().flex_col().items_center().child(over(p.reading.as_deref().unwrap_or(""))).child(big(&p.text)).into_element()
+            }))
+            .into_element(),
+        None => view().children((!reading.is_empty() && reading != spelling).then(|| over(reading))).child(big(spelling)).into_element(),
+    }
 }
 
 const GLIDE: LayoutTransition = LayoutTransition::new(LayoutCurve::EaseOut, 160.0);

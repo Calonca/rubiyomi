@@ -211,13 +211,14 @@ impl ReaderState {
 
     // The words of the chapter shown are found aside and saved, so a chapter seen before is
     // coloured at once; the next chapter's are found ahead. Runs in an effect.
-    pub fn colour(&self) {
+    pub fn colour(&self, for_furigana: bool) {
         let index = self.index.get();
         let chapter = self.chapter.get();
         let finder = self.shared.finder.get().ok();
         let (grader, parser) = (self.shared.grader.get(), self.shared.parser.get());
-        // Words found by jpdb.io are wanted for looking up too, so they're found without a grader.
-        if grader.is_none() && parser.is_none() && !crate::hooks::fake_states_on() {
+        // Words found by jpdb.io are wanted for looking up too, and any for their furigana, so
+        // they're found without a grader.
+        if grader.is_none() && parser.is_none() && !for_furigana && !crate::hooks::fake_states_on() {
             if self.words.colours.get_untracked().is_some() {
                 self.words.colours.set(None);
             }

@@ -87,6 +87,28 @@ pub struct JpdbClient {
     last: Arc<Mutex<Option<Instant>>>,
 }
 
+// A token's furigana: its pieces in order, kana as they are and kanji as `[kanji, reading]`.
+fn furigana(pieces: Option<&Value>) -> Vec<crate::text::Ruby> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for piece in pieces.and_then(Value::as_array).into_iter().flatten() {
+        let (text, reading) = match piece {
+            Value::String(kana) => (kana.as_str(), None),
+            Value::Array(pair) => match (pair.first().and_then(Value::as_str), pair.get(1).and_then(Value::as_str)) {
+                (Some(kanji), Some(reading)) => (kanji, Some(reading)),
+                _ => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        };
+        let len = text.chars().count() as u32;
+        if let Some(reading) = reading {
+            out.push(crate::text::Ruby { start: at, len, text: reading.to_owned() });
+        }
+        at += len;
+    }
+    out
+}
+
 impl JpdbClient {
     pub fn new(key: &str) -> Self {
         Self::with_transport(key, http::transport())
@@ -166,7 +188,7 @@ impl JpdbClient {
             "parse",
             json!({
                 "text": texts,
-                "token_fields": ["vocabulary_index", "position", "length"],
+                "token_fields": ["vocabulary_index", "position", "length", "furigana"],
                 "vocabulary_fields": ["vid", "spelling", "reading", "meanings", "part_of_speech"],
                 // Char offsets, as the reader counts.
                 "position_length_encoding": "utf32",
@@ -198,6 +220,7 @@ impl JpdbClient {
                                 .map(|l| l.iter().filter_map(Value::as_str).map(str::to_owned).collect())
                                 .unwrap_or_default(),
                             jmdict_id: v.first()?.as_u64().and_then(|id| u32::try_from(id).ok()),
+                            ruby: furigana(t.get(3)),
                         })
                     })
                     .collect();
@@ -371,7 +394,7 @@ mod tests {
             assert_eq!(body["position_length_encoding"], "utf32");
             Ok(Response::ok(
                 json!({
-                    "tokens": [[[1, 3, 2], [0, 0, 2]], []],
+                    "tokens": [[[1, 3, 2, [["下", "げ"], ["人", "にん"]]], [0, 0, 2, null]], []],
                     "vocabulary": [[1467640, "羅生", "らしょう", ["a gate"], ["n"]], [1538750, "下人", "げにん", ["servant", "menial"], ["n"]]],
                 })
                 .to_string(),
@@ -384,6 +407,16 @@ mod tests {
         assert_eq!(w, [(0, 2, "羅生"), (3, 2, "下人")]);
         assert_eq!(words[0][1].meanings, ["servant", "menial"]);
         assert_eq!(words[0][1].jmdict_id, Some(1538750));
+        let ruby: Vec<(u32, u32, &str)> = words[0][1].ruby.iter().map(|r| (r.start, r.len, r.text.as_str())).collect();
+        assert_eq!(ruby, [(0, 1, "げ"), (1, 1, "にん")]);
+        assert!(words[0][0].ruby.is_empty());
+    }
+
+    #[test]
+    fn furigana_counts_kana_and_skips_them() {
+        let pieces = json!([["食", "た"], "べ", ["物", "もの"]]);
+        let ruby: Vec<(u32, u32, String)> = furigana(Some(&pieces)).into_iter().map(|r| (r.start, r.len, r.text)).collect();
+        assert_eq!(ruby, [(0, 1, "た".to_owned()), (2, 1, "もの".to_owned())]);
     }
 
     #[test]
