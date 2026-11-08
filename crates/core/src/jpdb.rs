@@ -87,6 +87,28 @@ pub struct JpdbClient {
     last: Arc<Mutex<Option<Instant>>>,
 }
 
+// A token's furigana: its pieces in order, kana as they are and kanji as `[kanji, reading]`.
+fn furigana(pieces: Option<&Value>) -> Vec<crate::text::Ruby> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for piece in pieces.and_then(Value::as_array).into_iter().flatten() {
+        let (text, reading) = match piece {
+            Value::String(kana) => (kana.as_str(), None),
+            Value::Array(pair) => match (pair.first().and_then(Value::as_str), pair.get(1).and_then(Value::as_str)) {
+                (Some(kanji), Some(reading)) => (kanji, Some(reading)),
+                _ => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        };
+        let len = text.chars().count() as u32;
+        if let Some(reading) = reading {
+            out.push(crate::text::Ruby { start: at, len, text: reading.to_owned() });
+        }
+        at += len;
+    }
+    out
+}
+
 impl JpdbClient {
     pub fn new(key: &str) -> Self {
         Self::with_transport(key, http::transport())
@@ -166,7 +188,7 @@ impl JpdbClient {
             "parse",
             json!({
                 "text": texts,
-                "token_fields": ["vocabulary_index", "position", "length"],
+                "token_fields": ["vocabulary_index", "position", "length", "furigana"],
                 "vocabulary_fields": ["vid", "spelling", "reading", "meanings", "part_of_speech"],
                 // Char offsets, as the reader counts.
                 "position_length_encoding": "utf32",
@@ -198,6 +220,7 @@ impl JpdbClient {
                                 .map(|l| l.iter().filter_map(Value::as_str).map(str::to_owned).collect())
                                 .unwrap_or_default(),
                             jmdict_id: v.first()?.as_u64().and_then(|id| u32::try_from(id).ok()),
+                            ruby: furigana(t.get(3)),
                         })
                     })
                     .collect();
@@ -211,33 +234,51 @@ impl JpdbClient {
     pub fn chapter_words(&self, chapter: &crate::text::Chapter) -> Result<Vec<crate::finder::Word>, JpdbError> {
         const BATCH: usize = 4000;
         let mut all = Vec::new();
-        let (mut texts, mut starts, mut size) = (Vec::new(), Vec::new(), 0);
+        let (mut batch, mut size) = (Vec::new(), 0);
         let mut start = 0;
-        let mut send = |texts: &mut Vec<String>, starts: &mut Vec<usize>| -> Result<(), JpdbError> {
-            for (words, at) in self.parse_words(texts)?.into_iter().zip(starts.iter()) {
-                all.extend(words.into_iter().map(|mut w| {
-                    w.start += at;
-                    w
-                }));
-            }
-            texts.clear();
-            starts.clear();
-            Ok(())
-        };
         for b in &chapter.blocks {
             if let Some(t) = b.as_text().filter(|t| !t.text.trim().is_empty()) {
-                texts.push(t.text.clone());
-                starts.push(start);
-                size += t.text.chars().count();
-                if size >= BATCH {
-                    send(&mut texts, &mut starts)?;
+                let chars = t.text.chars().count();
+                if size + chars > BATCH {
+                    self.words_of(&std::mem::take(&mut batch), &mut all)?;
                     size = 0;
                 }
+                batch.push((t.text.clone(), start));
+                size += chars;
             }
             start += b.char_len();
         }
-        send(&mut texts, &mut starts)?;
+        self.words_of(&batch, &mut all)?;
         Ok(all)
+    }
+
+    // jpdb.io doesn't say how much text it takes, so what it finds too long goes again in halves.
+    fn words_of(&self, texts: &[(String, usize)], all: &mut Vec<crate::finder::Word>) -> Result<(), JpdbError> {
+        let plain: Vec<String> = texts.iter().map(|(t, _)| t.clone()).collect();
+        match self.parse_words(&plain) {
+            Ok(found) => {
+                for (words, (_, at)) in found.into_iter().zip(texts) {
+                    all.extend(words.into_iter().map(|mut w| {
+                        w.start += at;
+                        w
+                    }));
+                }
+                Ok(())
+            }
+            Err(JpdbError::Api(message)) if message.contains("too long") => {
+                let (first, second) = match texts {
+                    [(text, at)] if text.chars().count() > 1 => split_text(text, *at),
+                    [_] => return Err(JpdbError::Api(message)),
+                    _ => {
+                        let (a, b) = texts.split_at(texts.len() / 2);
+                        (a.to_vec(), b.to_vec())
+                    }
+                };
+                self.words_of(&first, all)?;
+                self.words_of(&second, all)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn review(&self, ids: JpdbIds, grade: Review) -> Result<(), JpdbError> {
@@ -326,6 +367,20 @@ fn api_error(status: u16, body: &str) -> JpdbError {
     JpdbError::Api(message.to_owned())
 }
 
+type Located = Vec<(String, usize)>;
+
+// Two parts at the sentence end nearest the middle, so no word is cut when there is one.
+fn split_text(text: &str, at: usize) -> (Located, Located) {
+    let chars: Vec<char> = text.chars().collect();
+    let middle = chars.len() / 2;
+    let cut = (1..chars.len())
+        .filter(|&i| matches!(chars[i - 1], '。' | '！' | '？' | '!' | '?' | '\n'))
+        .min_by_key(|&i| i.abs_diff(middle))
+        .unwrap_or(middle);
+    let part = |c: &[char]| c.iter().collect::<String>();
+    (vec![(part(&chars[..cut]), at)], vec![(part(&chars[cut..]), at + cut)])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,7 +394,7 @@ mod tests {
             assert_eq!(body["position_length_encoding"], "utf32");
             Ok(Response::ok(
                 json!({
-                    "tokens": [[[1, 3, 2], [0, 0, 2]], []],
+                    "tokens": [[[1, 3, 2, [["下", "げ"], ["人", "にん"]]], [0, 0, 2, null]], []],
                     "vocabulary": [[1467640, "羅生", "らしょう", ["a gate"], ["n"]], [1538750, "下人", "げにん", ["servant", "menial"], ["n"]]],
                 })
                 .to_string(),
@@ -352,5 +407,57 @@ mod tests {
         assert_eq!(w, [(0, 2, "羅生"), (3, 2, "下人")]);
         assert_eq!(words[0][1].meanings, ["servant", "menial"]);
         assert_eq!(words[0][1].jmdict_id, Some(1538750));
+        let ruby: Vec<(u32, u32, &str)> = words[0][1].ruby.iter().map(|r| (r.start, r.len, r.text.as_str())).collect();
+        assert_eq!(ruby, [(0, 1, "げ"), (1, 1, "にん")]);
+        assert!(words[0][0].ruby.is_empty());
+    }
+
+    #[test]
+    fn furigana_counts_kana_and_skips_them() {
+        let pieces = json!([["食", "た"], "べ", ["物", "もの"]]);
+        let ruby: Vec<(u32, u32, String)> = furigana(Some(&pieces)).into_iter().map(|r| (r.start, r.len, r.text)).collect();
+        assert_eq!(ruby, [(0, 1, "た".to_owned()), (2, 1, "もの".to_owned())]);
+    }
+
+    #[test]
+    fn a_text_found_too_long_goes_again_in_parts_at_sentence_ends() {
+        // The opening of 吾輩は猫である (Natsume Soseki, Aozora Bunko), a paragraph too long for one text.
+        let sentence = "吾輩は猫である。";
+        let long = sentence.repeat(100);
+        let mock = Mock::new(|r| {
+            let body: Value = serde_json::from_str(&r.body).unwrap();
+            let texts = body["text"].as_array().unwrap();
+            let size: usize = texts.iter().map(|t| t.as_str().unwrap().chars().count()).sum();
+            if size > 100 {
+                let refused = json!({ "error": "bad_request", "error_message": "'text' is too long" }).to_string();
+                return Ok(Response { status: 400, body: refused, retry_after: None });
+            }
+            let tokens: Vec<Value> = texts.iter().map(|_| json!([[0, 0, 1]])).collect();
+            Ok(Response::ok(json!({ "tokens": tokens, "vocabulary": [[1, "吾", "われ", ["I"], ["n"]]] }).to_string()))
+        });
+        let client = JpdbClient::with_transport("key", mock.clone());
+        let chapter = crate::text::Chapter {
+            title: String::new(),
+            blocks: vec![
+                crate::text::Block::Text(crate::text::TextBlock::plain("吾輩")),
+                crate::text::Block::Text(crate::text::TextBlock::plain(long)),
+            ],
+        };
+
+        let words = client.chapter_words(&chapter).unwrap();
+
+        let all: Vec<char> = format!("吾輩{}", sentence.repeat(100)).chars().collect();
+        let starts: Vec<usize> = words.iter().map(|w| w.start).collect();
+        assert!(starts.len() > 2, "{starts:?}");
+        assert!(starts.windows(2).all(|w| w[0] < w[1]), "{starts:?}");
+        assert!(starts.iter().all(|&at| all[at] == '吾'), "{starts:?}");
+        let sent: String = mock
+            .requests()
+            .iter()
+            .map(|r| serde_json::from_str::<Value>(&r.body).unwrap())
+            .filter(|b| b["text"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().chars().count()).sum::<usize>() <= 100)
+            .flat_map(|b| b["text"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_owned()).collect::<Vec<_>>())
+            .collect();
+        assert_eq!(sent.chars().collect::<Vec<_>>(), all);
     }
 }

@@ -117,6 +117,8 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+pub const STATES: &[CardState] = &[CardState::New, CardState::Learning, CardState::Due, CardState::Known, CardState::Locked];
+
 // WaniKani has no JMdict ids, so words are matched by spelling and reading
 // (spelling alone for kana vocabulary). Only words it teaches get a state.
 pub struct WaniKaniGrader {
@@ -314,6 +316,8 @@ mod tests {
         let got: Vec<Option<CardState>> = words.iter().map(|w| states.get(&w.key()).copied()).collect();
         use CardState::*;
         assert_eq!(got, [Some(Due), Some(New), Some(Learning), Some(Known), Some(Known), Some(Locked), None, None]);
+        assert!(STATES.iter().all(|s| got.contains(&Some(*s))), "a state listed that no word gets");
+        assert!(got.iter().flatten().all(|s| STATES.contains(s)), "a state given that isn't listed");
         let reasons: Vec<Result<(), String>> = words[..6].iter().map(|w| grader.can_grade(w)).collect();
         assert_eq!(reasons[0], Ok(()));
         assert_eq!(reasons[1], Err("Lesson not done yet".into()));

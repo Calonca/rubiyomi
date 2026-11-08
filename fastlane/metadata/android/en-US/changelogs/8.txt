@@ -1,0 +1,4 @@
+• Rebuilt on Android's own views: native scrolling, text selection and buttons
+• Furigana over every word's kanji, from the dictionary, in the word's colour
+• Custom word colours with a colour picker
+• Needs Android 9 or later

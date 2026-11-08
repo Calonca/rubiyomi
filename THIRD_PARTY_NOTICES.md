@@ -118,10 +118,21 @@ above as far as the program is concerned.
 
 ## Material Symbols (icons)
 
-The icon font, *Material Symbols Rounded*, by Google, through the
-`egui_material_icons` crate (MIT). Licensed under the Apache License,
+The icon font, *Material Symbols Rounded*, by Google, as the
+`egui_material_icons` crate (MIT) packs it. Licensed under the Apache License,
 Version 2.0: <https://www.apache.org/licenses/LICENSE-2.0>.
-Source: <https://github.com/google/material-design-icons>.
+The app ships a subset of it, cut down to the icons it uses
+(`crates/app/assets/MaterialSymbolsRounded-subset.ttf`, made by
+`tool/icon-font.py`); the glyphs are unchanged.
+Source: <https://github.com/google/material-design-icons>. Credited in the
+app under Settings → About.
+
+## NSH (native-shell)
+
+The app draws its screens with NSH, <https://github.com/longbridge/native-shell>,
+licensed under the Apache License, Version 2.0:
+<https://www.apache.org/licenses/LICENSE-2.0>. On Android it also ships NSH's
+Java runtime classes, under the same licence. Settings → About credits it.
 
 ## Material Color Utilities
 
@@ -138,16 +149,6 @@ bundled through the `webpki-roots` crate (CDLA-Permissive-2.0,
 <https://github.com/rustls/webpki-roots>; the list itself comes from
 Mozilla's CA Certificate Program through the Common CA Database,
 <https://www.ccadb.org/>).
-
-## egui default fonts
-
-egui's built-in fonts are included through `epaint_default_fonts`:
-
-- Ubuntu Light — Ubuntu Font Licence 1.0, © Canonical Ltd.
-- Hack — MIT, © Source Foundry Authors; Bitstream Vera licence for the parts
-  derived from Bitstream Vera; DejaVu changes in the public domain.
-- Noto Emoji — SIL Open Font License 1.1, © Google Inc.
-- emoji-icon-font — MIT, © 2014 John Slegers.
 
 ## AppImage runtime (Linux download)
 

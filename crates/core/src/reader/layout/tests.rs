@@ -53,3 +53,28 @@ fn no_line_starts_or_ends_where_kinsoku_forbids() {
         }
     }
 }
+
+#[test]
+fn an_overhanging_reading_leaves_its_word_alone() {
+    struct Hanging;
+    impl Measure for Hanging {
+        fn advance(&self, text: &str, size: f32) -> f32 {
+            FixedMeasure.advance(text, size)
+        }
+        fn ruby_overhangs(&self) -> bool {
+            true
+        }
+    }
+    // 夏目漱石「吾輩は猫である」, public domain, from Aozora Bunko.
+    let text = "吾輩は猫";
+    let runs =
+        [Run { start: 0, len: 2, ruby: Some("わがはいわがはい".to_owned()), ..Run::default() }, Run { start: 2, len: 2, ..Run::default() }];
+    let cfg = LayoutConfig { width: 200.0, height: 200.0, font_size: 20.0, show_ruby: true, ..LayoutConfig::default() };
+    let blocks = [LayoutBlock::Text { block: 0, start: 0, text, runs: &runs, heading: false }];
+    let page = &layout(&blocks, &cfg, &Hanging)[0];
+    let xs: Vec<f32> = page.glyphs.iter().map(|g| g.rect.x).collect();
+    assert_eq!(xs, [0.0, 20.0, 40.0, 60.0]);
+    let reading = page.ruby[0].rect;
+    assert_eq!(reading.x + reading.w / 2.0, 20.0);
+    assert!(reading.w > 40.0);
+}

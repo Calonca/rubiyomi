@@ -59,7 +59,7 @@ border = rrect(33 - w / 2, 27 - w / 2, 42 + w, 54 + w, 3 + w / 2) + rrect(33 + w
 letters = letter(font, "ル", 52) + letter(font, "ビ", 75)
 odd = ' android:fillType="evenOdd"'
 
-res = Path(__file__).resolve().parent.parent / "android/app/src/main/res/drawable"
+res = Path(__file__).resolve().parent.parent / "crates/app/android/res/drawable"
 (res / "ic_launcher_background.xml").write_text(vector([(INK, "M0,0h108v108h-108z", "")]))
 (res / "ic_launcher_foreground.xml").write_text(vector([(GOLD, seal, ""), (INK, border, odd), (INK, letters, "")]))
 (res / "ic_launcher_monochrome.xml").write_text(vector([("#FFFFFF", seal + border + letters, odd)]))

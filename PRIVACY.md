@@ -1,6 +1,6 @@
 # Rubiyomi privacy policy
 
-Last updated: 28 October 2026.
+Last updated: 8 November 2026.
 
 Rubiyomi collects no data. It has no account, no analytics, no ads and no
 crash reporting, and its author receives nothing from it.
@@ -15,7 +15,8 @@ out of it.
 
 Your jpdb.io API key, AnkiConnect key and WaniKani token are stored encrypted, with a key
 held in the Android Keystore (on Linux, in the desktop's secret service; on
-Windows, in the Credential Manager).
+Windows, in the Credential Manager). Without a secret service on Linux a key
+is not kept at all, and you are asked for it again.
 
 ## The update check
 

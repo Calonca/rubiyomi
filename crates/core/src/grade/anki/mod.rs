@@ -64,6 +64,9 @@ pub trait AnkiBackend: Send + Sync {
     fn suspend(&self, note: u64) -> Result<(), GradeError>;
 }
 
+pub const STATES: &[CardState] =
+    &[CardState::NotInDeck, CardState::New, CardState::Learning, CardState::Known, CardState::Due, CardState::Suspended];
+
 pub struct AnkiGrader {
     backend: Box<dyn AnkiBackend>,
     mapping: AnkiMapping,
@@ -322,6 +325,55 @@ pub fn guess_roles(fields: &[String]) -> [String; 4] {
         roles[0] = f.clone();
     }
     roles
+}
+
+#[cfg(test)]
+mod states_tests {
+    use super::*;
+    use crate::finder::Word;
+
+    // One note in each state, its word the note's id.
+    struct OneOfEach;
+
+    impl AnkiBackend for OneOfEach {
+        fn decks(&self) -> Result<Vec<String>, GradeError> {
+            Ok(vec![])
+        }
+        fn note_types(&self) -> Result<Vec<String>, GradeError> {
+            Ok(vec![])
+        }
+        fn fields(&self, _: &str) -> Result<Vec<String>, GradeError> {
+            Ok(vec!["Word".into()])
+        }
+        fn find_notes(&self, query: &str) -> Result<Vec<u64>, GradeError> {
+            let found = [("is:new", 1), ("is:due", 2), ("is:learn", 3), ("is:suspended", 4)].into_iter().find(|(q, _)| query.ends_with(q));
+            Ok(found.map_or(vec![1, 2, 3, 4, 5], |(_, n)| vec![n]))
+        }
+        fn notes(&self, ids: &[u64]) -> Result<Vec<Note>, GradeError> {
+            Ok(ids.iter().map(|id| Note { id: *id, fields: vec![id.to_string()] }).collect())
+        }
+        fn answer(&self, _: u64, _: u8) -> Result<(), GradeError> {
+            Ok(())
+        }
+        fn add_note(&self, _: &str, _: &str, _: &[(String, String)], _: &[&str]) -> Result<u64, GradeError> {
+            Ok(0)
+        }
+        fn suspend(&self, _: u64) -> Result<(), GradeError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_list_is_what_the_cards_give() {
+        let mapping = AnkiMapping { deck: "Deck".into(), note_type: "Note".into(), word_field: "Word".into(), ..AnkiMapping::default() };
+        let grader = AnkiGrader::new(Box::new(OneOfEach), mapping);
+        grader.sync(&|_, _| {}).unwrap();
+        let words: Vec<Word> = (1..=6).map(|n| Word { spelling: n.to_string(), jmdict_id: Some(n), ..Word::default() }).collect();
+        let states = grader.states(&words);
+        let got: HashSet<CardState> = states.values().copied().collect();
+        assert_eq!(got, STATES.iter().copied().collect::<HashSet<_>>());
+        assert_eq!(STATES.len(), 6);
+    }
 }
 
 #[cfg(test)]
