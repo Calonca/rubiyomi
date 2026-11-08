@@ -44,6 +44,13 @@ else
   store=$HOME/.android/debug.keystore store_pass=android alias=androiddebugkey key_pass=android
 fi
 
+# Made as Gradle makes it where there is none yet, as on a CI runner.
+if [ "$store" = "$HOME/.android/debug.keystore" ] && [ ! -f "$store" ]; then
+  mkdir -p "$HOME/.android"
+  keytool -genkeypair -keystore "$store" -storepass android -alias androiddebugkey -keypass android -keyalg RSA \
+    -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+fi
+
 rm -rf "${out:?}/lib" "${out:?}/assets"
 mkdir -p "$out/lib/arm64-v8a" "$out/assets/nsh" "$out/assets/dict" "$out/classes"
 cp dist/dict/* "$out/assets/dict/"

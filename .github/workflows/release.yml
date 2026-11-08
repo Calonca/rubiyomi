@@ -98,8 +98,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
-      - name: GTK 4 for the desktop window
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+      # NSH's Linux platform plays media through GStreamer.
+      - name: GTK 4 and GStreamer for the desktop window
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dict
