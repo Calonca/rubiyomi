@@ -10,7 +10,7 @@ version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 # appimagetool ships only as a rolling "continuous" release; when it moves, check the new
 # build and put its digest (shown on the release page) here.
 tool_url=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-tool_sha256=95cbe7cce9717fce90c484e34052ee7c7f1d7635b33c12525b4776826a7d29b6
+tool_sha256=e8c1169c4af66c3184d7ee110713d4be04befe671fa358e2c1591ee840553b03
 
 if [ ! -f dist/dict/version.json ]; then
   echo "no dictionaries in dist/dict: run cargo xtask dict first" >&2
