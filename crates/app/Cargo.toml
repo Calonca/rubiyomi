@@ -41,22 +41,22 @@ rubiyomi-core.workspace = true
 log.workspace = true
 serde_json.workspace = true
 zip = { version = "9", default-features = false, features = ["deflate"] }
-nsh-core = { git = "https://github.com/longbridge/native-shell", rev = "c015f2c5e9e5f9f6f7656a4d2baabb3e4e4f28d0" }
-nsh-base = { git = "https://github.com/longbridge/native-shell", rev = "c015f2c5e9e5f9f6f7656a4d2baabb3e4e4f28d0", default-features = false }
+nsh-core = { git = "https://github.com/longbridge/native-shell", rev = "c85e3f7dc878a638198cc129f835ec0afdfbd5a6" }
+nsh-base = { git = "https://github.com/longbridge/native-shell", rev = "c85e3f7dc878a638198cc129f835ec0afdfbd5a6", default-features = false }
 
 [target.'cfg(target_os = "android")'.dependencies]
-nsh-platform-android = { git = "https://github.com/longbridge/native-shell", rev = "c015f2c5e9e5f9f6f7656a4d2baabb3e4e4f28d0", default-features = false }
+nsh-platform-android = { git = "https://github.com/longbridge/native-shell", rev = "c85e3f7dc878a638198cc129f835ec0afdfbd5a6", default-features = false }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 env_logger = { version = "0.11", optional = true }
 keyring-core = { version = "1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nsh-platform-linux = { git = "https://github.com/longbridge/native-shell", rev = "c015f2c5e9e5f9f6f7656a4d2baabb3e4e4f28d0", default-features = false, optional = true }
+nsh-platform-linux = { git = "https://github.com/longbridge/native-shell", rev = "c85e3f7dc878a638198cc129f835ec0afdfbd5a6", default-features = false, optional = true }
 zbus-secret-service-keyring-store = { version = "1", features = ["rt-async-io-crypto-rust"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
-nsh-platform-windows = { git = "https://github.com/longbridge/native-shell", rev = "c015f2c5e9e5f9f6f7656a4d2baabb3e4e4f28d0", default-features = false, optional = true }
+nsh-platform-windows = { git = "https://github.com/longbridge/native-shell", rev = "c85e3f7dc878a638198cc129f835ec0afdfbd5a6", default-features = false, optional = true }
 windows-native-keyring-store = { version = "1.1", optional = true }
 
 [lints]
