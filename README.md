@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/31a4f6e5-a92a-47f0-b96e-b2b12c2af77e
 
 ## Get it
 
-**Android**, on Google Play (closed test). Start here:
+**Android** 9 or later, on Google Play (closed test). Start here:
 
 ### [➜ Join the tester group](https://groups.google.com/g/rubiyomi-testers)
 
@@ -42,6 +42,8 @@ From the [latest release](https://github.com/Calonca/rubiyomi/releases/latest):
   device).
 - **Linux:** `Rubiyomi-<version>-x86_64.AppImage`. Make it executable
   (`chmod +x`, or Properties → Executable in your file manager) and run it.
+  It uses your system's GTK, which must be 4.14 or later (Ubuntu 24.04,
+  Fedora 40, Debian 13 and newer).
 - **Windows:** `Rubiyomi-<version>-x86_64.exe`. One file, nothing to install:
   run it. It isn't signed yet, so Windows SmartScreen warns about an unknown
   publisher the first time; choose *More info* → *Run anyway*.
@@ -79,8 +81,10 @@ Please keep it installed for two weeks, and report what breaks in the
   are found on the device. You can also have jpdb.io split the text, under
   Settings → Parsing.
 - **Pages your way.** Vertical or horizontal text, serif or sans, text size
-  and line height, light, sepia, grey, dark, black and ocean themes, and
-  furigana shown, hidden or faint. Pages slide under your finger as you swipe;
+  and line height, light, sepia, grey, dark, black and ocean themes.
+- **Furigana over every word.** Readings from the dictionary (or from jpdb.io
+  when it splits the text) stand over each word's kanji, in the word's colour;
+  or keep the book's own, or hide them. Pages slide under your finger as you swipe;
   on a computer the arrow keys turn them.
 - **Where you are.** A tap shows how far you are in the chapter and in the
   book, and the library shows each book's cover with its progress. The app
@@ -97,51 +101,33 @@ GitHub for the latest release when they start, which you can turn off.
 
 ```sh
 cargo xtask dict                  # the dictionaries, into dist/dict (needs curl, tar, xz)
-cargo run --profile fast          # desktop
-tool/android-build.sh             # APK, in android/app/build/outputs/apk/debug/
+tool/desktop.sh                   # the desktop app, target/desktop/fast/rubiyomi
+tool/android.sh                   # Rubiyomi dev, target/apk/rubiyomi-dev.apk
 ```
 
-The APK needs the Android SDK, NDK 28 and `cargo-ndk`.
+The desktop app is GTK 4 on Linux (it needs GTK 4's development files;
+`tool/gtk-dev.sh` unpacks them without installing anything, which
+`tool/desktop.sh` does when they're missing). The APK needs the Android SDK
+(platform 36, build tools 36), NDK 28, a JDK and `cargo-ndk`; no Gradle.
+Rubiyomi dev is an app of its own beside the released one.
 
-`tool/android-build.sh release` builds the signed APK and the Play Store
-bundle. The upload key stays outside the repository: point
-`android/keystore.properties` at it (see `keystore.properties.example`) or set
-the `RUBIYOMI_KEYSTORE*` variables.
+`tool/android.sh release` builds the signed APK and the Play Store bundle
+(`target/apk/rubiyomi.apk`, `rubiyomi.aab`). The upload key stays outside the
+repository: point `keystore.properties` at it (see
+`keystore.properties.example`) or set the `RUBIYOMI_KEYSTORE*` variables.
 
 The desktop downloads:
 
 ```sh
-cargo build --release --features update-check
+cargo build --release -p rubiyomi --features desktop,update-check
 tool/appimage.sh target/release/rubiyomi out         # Linux AppImage
-cargo build --release --features update-check,embed-dict --target x86_64-pc-windows-msvc
+cargo build --release -p rubiyomi --features desktop,update-check,embed-dict --target x86_64-pc-windows-msvc
 ```
 
 `embed-dict` puts the dictionaries inside the binary, for the single-file
-Windows `.exe`. Builds without `update-check` (`cargo run`, distro packages)
+Windows `.exe`. Builds without `update-check` (distro packages, your own)
 never look for updates. `tool/update-feed.py FILE` serves a pretend release to
 try the update flow against.
-
-### macOS
-
-There is no macOS download; build it from source:
-
-1. Install the Xcode command line tools (`xcode-select --install`), Rust
-   (<https://rustup.rs>) and `xz` (`brew install xz`; the dictionary build
-   uses it).
-2. In a clone of this repository:
-
-   ```sh
-   cargo xtask dict          # the dictionaries, into dist/dict
-   cargo build --release
-   ```
-
-3. Run `target/release/rubiyomi`. It finds the dictionaries in the clone's
-   `dist/dict`; to move the binary elsewhere, put a copy of `dist/dict` beside
-   it as `dict`.
-
-A source build, on any system, has no update check: to update, `git pull` and
-build again. Your jpdb.io, AnkiConnect and WaniKani keys are kept in a file only your
-user can read, as the macOS Keychain isn't used yet.
 
 A `v*` tag builds the APK, the Play bundle, the AppImage and the `.exe` on
 GitHub, each with its `.sha256`, with the key from the `release` environment's
