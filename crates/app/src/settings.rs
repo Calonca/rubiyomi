@@ -39,6 +39,8 @@ pub enum Page {
     CustomColours {
         from_page: bool,
     },
+    #[cfg(feature = "update-check")]
+    Updates,
 }
 
 impl Page {
@@ -53,6 +55,8 @@ impl Page {
             Page::WordFinder => "Word finder",
             Page::WordColours { .. } => "Word colours",
             Page::CustomColours { .. } => "Custom colours",
+            #[cfg(feature = "update-check")]
+            Page::Updates => "Updates",
         }
     }
 
@@ -106,7 +110,25 @@ fn main(to: Signal<Page>, shared: &Shared) -> AnyElement {
                 log::warn!("couldn't open {PRIVACY}");
             }
         }))
+        .child(updates_item(to))
         .into_element()
+}
+
+#[cfg(feature = "update-check")]
+fn updates_item(to: Signal<Page>) -> Option<AnyElement> {
+    let on = crate::updates::get()?.check_on_start;
+    Some(
+        dynamic(move || {
+            let detail = if on.get() { "Checked when the app starts" } else { "Checked only when you ask" };
+            item(glyph::UPDATE, "Updates", detail, to, Page::Updates).into_element()
+        })
+        .into_element(),
+    )
+}
+
+#[cfg(not(feature = "update-check"))]
+fn updates_item(_: Signal<Page>) -> Option<AnyElement> {
+    None
 }
 
 fn parsing(shared: &Shared) -> AnyElement {
@@ -370,6 +392,8 @@ pub fn screen() -> impl IntoElement {
             Page::WordFinder => word_finder(),
             Page::WordColours { from_page } => crate::colours_page::choose(shared.page, move || to.set(Page::CustomColours { from_page })),
             Page::CustomColours { .. } => crate::colours_page::custom(shared.page),
+            #[cfg(feature = "update-check")]
+            Page::Updates => crate::updates::get().map_or_else(|| view().into_element(), crate::updates::page),
         })
     };
     view()
@@ -384,7 +408,7 @@ pub fn screen() -> impl IntoElement {
         .child(scroll().flex_1().child(body))
 }
 
-// A debug hook for the headless runs: `RUBIYOMI_SETTINGS_PAGE=page|dictionary|parsing|reviews|about|finder|colours|custom`.
+// A debug hook for the headless runs: `RUBIYOMI_SETTINGS_PAGE=page|dictionary|parsing|reviews|about|finder|colours|custom|updates`.
 #[cfg(feature = "dev-hooks")]
 fn debug_page(name: &str) -> Option<Page> {
     Some(match name {
@@ -396,6 +420,8 @@ fn debug_page(name: &str) -> Option<Page> {
         "finder" => Page::WordFinder,
         "colours" => Page::WordColours { from_page: false },
         "custom" => Page::CustomColours { from_page: false },
+        #[cfg(feature = "update-check")]
+        "updates" => Page::Updates,
         _ => return None,
     })
 }

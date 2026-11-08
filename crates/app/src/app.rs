@@ -243,6 +243,8 @@ pub fn App() -> impl IntoElement {
         Route::Library
     };
     persist_page(&shared);
+    #[cfg(feature = "update-check")]
+    crate::updates::start(shared.platform.data_dir());
     reviews::watch(&shared);
     #[cfg(feature = "dev-hooks")]
     debug_hooks(&shared);

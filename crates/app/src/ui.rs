@@ -59,6 +59,8 @@ pub mod glyph {
     pub const SEGMENT: &str = "\u{e94b}";
     pub const SETTINGS: &str = "\u{e8b8}";
     pub const TEXT_FIELDS: &str = "\u{e262}";
+    #[cfg(feature = "update-check")]
+    pub const UPDATE: &str = "\u{e923}";
 }
 
 // The family the icon font was registered under, once it has been.

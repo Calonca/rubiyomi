@@ -23,6 +23,9 @@ desktop = ["dep:nsh-platform-linux", "dep:env_logger", "dep:keyring-core", "dep:
 # The headless runs' environment variables (src/hooks.rs), and the keys in a file. Never on Android.
 dev-hooks = []
 
+# The update check, for the GitHub desktop downloads only (AppImage, .exe). Never on Android.
+update-check = []
+
 [dependencies]
 rubiyomi-core.workspace = true
 log.workspace = true

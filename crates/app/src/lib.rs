@@ -5,6 +5,8 @@
 
 #[cfg(all(feature = "dev-hooks", target_os = "android"))]
 compile_error!("dev-hooks reads the environment and keeps keys in a file: it is never on Android");
+#[cfg(all(feature = "update-check", target_os = "android"))]
+compile_error!("update-check is for the AppImage and the .exe: the store updates the Android app");
 
 #[cfg(target_os = "android")]
 mod android;
@@ -23,6 +25,8 @@ mod settings;
 mod setup;
 mod stats;
 mod ui;
+#[cfg(feature = "update-check")]
+pub mod updates;
 mod words;
 
 pub use app::App;

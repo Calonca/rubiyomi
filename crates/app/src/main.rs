@@ -15,6 +15,15 @@ fn window_size() -> (i32, i32) {
 
 fn main() -> impl std::process::Termination {
     env_logger::init();
+    #[cfg(feature = "update-check")]
+    {
+        let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+        if let [flag, old, ..] = args.as_slice()
+            && flag == rubiyomi::updates::REPLACES
+        {
+            rubiyomi::updates::finish_replacing(old.into());
+        }
+    }
     let size = window_size();
     let window = format!(r#"{{"defaultSize":{{"width":{},"height":{}}},"minSize":{{"width":360,"height":480}}}}"#, size.0, size.1);
     platform::run_app(

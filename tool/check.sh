@@ -8,6 +8,7 @@ export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/28.2.13676358}"
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --profile fast -- -D warnings
 (. tool/gtk-env.sh && cargo clippy -p rubiyomi --features desktop,dev-hooks --all-targets --profile fast -- -D warnings)
+(. tool/gtk-env.sh && cargo clippy -p rubiyomi --features desktop,update-check --all-targets --profile fast -- -D warnings)
 cargo ndk -t arm64-v8a --platform 28 clippy -p rubiyomi --lib --profile fast -- -D warnings
 cargo test --workspace --profile fast
 cargo deny check licenses bans sources
