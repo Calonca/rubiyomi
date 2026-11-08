@@ -21,7 +21,8 @@ pub enum CardState {
 }
 
 impl CardState {
-    const ALL: [CardState; 12] = [
+    // In the order of the enum, so `state as usize` indexes it.
+    pub const ALL: [CardState; 12] = [
         CardState::NotInDeck,
         CardState::New,
         CardState::Learning,

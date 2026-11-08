@@ -18,8 +18,9 @@ use crate::dict::{DictState, DictStore};
 use crate::kana::{is_katakana, to_hiragana};
 use merge::{Merged, Morph, merge};
 
-// Bumped whenever `Finder::words` would split a text differently, so saved words are found again.
-const WORDS_FORMAT: u32 = 1;
+// Bumped whenever `Finder::words` would split a text differently, or words carry more, so saved
+// words are found again.
+const WORDS_FORMAT: u32 = 2;
 
 // What saved words were found with: the extractor, this finder and its dictionaries.
 pub fn words_tag(dict: &crate::dict::DictVersion) -> String {
@@ -42,6 +43,10 @@ pub struct Word {
     // JMdict's part-of-speech tags, such as v5r or adj-i.
     pub pos: Vec<String>,
     pub jmdict_id: Option<u32>,
+    // Readings over the kanji of the word as the text has it, at chars into it, when the parser
+    // gave them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ruby: Vec<crate::text::Ruby>,
 }
 
 impl Word {

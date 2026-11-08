@@ -1,32 +1,38 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
-use std::sync::Arc;
+//! Rubiyomi on native views. Rust only: no JS engine is linked.
 
-use rubiyomi_core::platform::Platform;
-
-pub mod app;
-pub mod platform;
-pub mod reviews;
-pub mod screens;
-pub mod task;
-pub mod ui;
-pub mod updates;
-
-pub fn run(options: eframe::NativeOptions, platform: Arc<dyn Platform>) -> eframe::Result<()> {
-    eframe::run_native("Rubiyomi", options, Box::new(move |cc| Ok(Box::new(app::App::new(&cc.egui_ctx, platform)))))
-}
+#[cfg(all(feature = "dev-hooks", target_os = "android"))]
+compile_error!("dev-hooks reads the environment and keeps keys in a file: it is never on Android");
+#[cfg(all(feature = "update-check", target_os = "android"))]
+compile_error!("update-check is for the AppImage and the .exe: the store updates the Android app");
 
 #[cfg(target_os = "android")]
-#[unsafe(no_mangle)]
-fn android_main(app: winit::platform::android::activity::AndroidApp) {
-    android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("rubiyomi"));
-    let platform = platform::android::Android::new(app.clone());
-    platform.exit_when_finishing();
-    let options = eframe::NativeOptions { android_app: Some(app), ..Default::default() };
-    if let Err(e) = run(options, platform) {
-        log::error!("Rubiyomi stopped: {e}");
-    }
-    // Android keeps the process for the next launch, and winit allows one event loop per process.
-    std::process::exit(0);
+mod android;
+mod app;
+mod colours_page;
+pub mod hooks;
+mod library;
+mod page_form;
+mod platform;
+mod reader;
+mod reviews;
+mod reviews_form;
+#[cfg(not(target_os = "android"))]
+mod secrets;
+mod settings;
+mod setup;
+mod stats;
+mod ui;
+#[cfg(feature = "update-check")]
+pub mod updates;
+mod words;
+
+pub use app::App;
+use nsh_core::prelude::*;
+
+#[native_module("rubiyomi/native")]
+fn native(registry: &mut Registry) {
+    registry.register::<App>();
 }

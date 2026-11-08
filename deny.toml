@@ -23,8 +23,6 @@ allow = [
     "BSL-1.0",
     "OFL-1.1",
 ]
-# egui's built-in UI font, Ubuntu Light; a permissive font licence (see THIRD_PARTY_NOTICES.md).
-exceptions = [{ crate = "epaint_default_fonts", allow = ["Ubuntu-font-1.0"] }]
 private = { ignore = true }
 
 [bans]
@@ -38,3 +36,5 @@ yanked = "warn"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# NSH is pinned by revision for its document picker, until a release has it.
+allow-git = ["https://github.com/longbridge/native-shell"]

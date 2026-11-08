@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Copyright (C) 2026 Alessandro La Conca -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.calonca.rubiyomi">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />
+    <queries>
+        <package android:name="com.ichi2.anki" />
+    </queries>
+    <application android:name="dev.calonca.rubiyomi.Bridge"
+        android:label="Rubiyomi"
+        android:icon="@mipmap/ic_launcher"
+        android:extractNativeLibs="false"
+        android:enableOnBackInvokedCallback="true"
+        android:supportsRtl="true"
+        android:allowBackup="true"
+        android:theme="@style/Rubiyomi">
+        <meta-data android:name="com.longbridge.nsh.RUST" android:value="true" />
+        <provider android:name="com.longbridge.nsh.FilesProvider"
+            android:authorities="dev.calonca.rubiyomi.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+        <activity android:name="com.longbridge.nsh.AppActivity" android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|fontScale|locale|layoutDirection">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,19 +1,21 @@
 # Rubiyomi
 
-Rust + egui reader for Japanese books, Linux and Android.
+Rust reader for Japanese books, on native views through NSH: Linux (GTK 4), Windows and Android.
 
 ## Layout
 
-- `crates/core` — no egui, no JNI: EPUB, library store, layout, dictionaries
-  (JMdict index, unpacking), word finder (lindera), reviews (jpdb.io and
+- `crates/core` — no UI, no JNI: EPUB, library store, layout, dictionaries
+  (JMdict index, unpacking), word finder (lindera), furigana, reviews (jpdb.io and
   AnkiConnect clients, graders, card states), settings, platform trait,
   colour schemes. HTTP goes through `http::Transport`, so tests answer with
   hand-written JSON. Unit tests live next to the code; test EPUBs are built in
   code (`testing.rs`).
-- `crates/app` — egui UI, desktop binary and Android cdylib.
-- `android/` — Gradle project; `MainActivity` extends NativeActivity.
-  `AnkiDroidBridge` talks to AnkiDroid; `Secrets` keeps keys encrypted with
-  the Android Keystore (desktop: the Secret Service, through keyring-core).
+- `crates/app` — the app, on NSH (native-shell, pinned by git rev in its Cargo.toml). Desktop
+  is feature `desktop` (GTK 4 on Linux), Android a cdylib with Java glue in
+  `crates/app/android/` (`Bridge`, `AnkiDroidBridge` for AnkiDroid, `Secrets` keeping keys
+  encrypted with the Android Keystore), its manifest and resources. Data in
+  `~/.local/share/rubiyomi`, keys under the keyring service "Rubiyomi" (Secret Service) or
+  the Android Keystore, never a file, except under `dev-hooks`.
 - `xtask` — `cargo xtask dict` builds the bundled dictionaries into
   `dist/dict/` (JMdict release pinned with its checksum in `xtask/src/main.rs`;
   `tool/bump-jmdict.sh` moves it to the newest jmdict-simplified English
@@ -25,20 +27,31 @@ Rust + egui reader for Japanese books, Linux and Android.
 
 ## Building
 
-Run builds through `slotq` (APK: `--cpus 6 --mem 6G`).
+Run builds through `slotq` (`--cpus 6 --mem 6G` for the APK and the desktop build).
 
-- **Use `--profile fast` for every build you run to test**:
-  `cargo build --profile fast`, `cargo run --profile fast`, and
-  `tool/android-build.sh fast` for the APK (the default; cargo-ndk, then
-  Gradle; APK in `android/app/build/outputs/apk/debug/`). `--release` only for
-  a build to hand out or for performance measurements.
+- **Use `--profile fast` for every build you run to test.** `--release` only for a build to
+  hand out or for performance measurements.
+- `tool/desktop.sh` builds the GTK window into `target/desktop/fast/rubiyomi` with the
+  `dev-hooks` feature (`tool/gtk-env.sh` points it at GTK 4's headers, unpacked by
+  `tool/gtk-dev.sh` into `target/gtk-dev` when the system has none);
+  `tool/headless.sh OUT.png [ENV=VALUE...]` runs that binary in a private headless weston and
+  saves a screenshot. Never run the desktop app on the user's display.
+- `tool/android.sh` builds Rubiyomi dev (`dev.calonca.rubiyomi.dev`, debug key),
+  `target/apk/rubiyomi-dev.apk`; `tool/android.sh release` the signed APK plus AAB of
+  `dev.calonca.rubiyomi`, with the upload key from `keystore.properties` or
+  `RUBIYOMI_KEYSTORE*`; never commit a key. No Gradle; needs `cargo xtask dict`. Bump
+  `version_code` in it for every Play upload. A `v*` tag runs `release.yml` (APK, AAB,
+  AppImage, `.exe`, into a draft release) with the key from the `release` environment's secrets.
 - Feature `update-check` (the desktop downloads only: AppImage, `.exe`) turns
-  on the update check; Android, `cargo run` and packaged builds never have it.
+  on the update check; Android and packaged builds never have it.
   `embed-dict` puts the dictionaries in the Windows `.exe`. `tool/appimage.sh`
   packs the AppImage; `tool/update-feed.py` serves a pretend release.
-- `tool/android-build.sh release` — signed APK plus AAB, with the upload key
-  from `android/keystore.properties` or `RUBIYOMI_KEYSTORE*`; never commit a
-  key. A `v*` tag runs `release.yml` (APK, AAB, AppImage, `.exe`, into a draft release) with the key from the `release` environment's secrets.
+- Feature `dev-hooks` (off by default, never on Android) turns on the `RUBIYOMI_*`
+  environment variables that the headless runs use (`SCREEN`, `SCRIPT`, `OPEN_WORD`, `WINDOW`,
+  `SECRETS_FILE`, ...), all read through `src/hooks.rs`; it also allows keys in a file. Release
+  builds don't have it. `RUBIYOMI_DICT_DIR` is a real setting and is always read.
+- `tool/icon-font.py` cuts the Material Symbols subset in `crates/app/assets` down to the icons listed
+  in it (needs fonttools).
 - `cargo test --workspace --profile fast` — the tests; `tool/check.sh` runs
   all of CI's checks locally.
 - `tool/icon.py ZenOldMincho-Bold.ttf` regenerates the launcher icon layers and

@@ -5,17 +5,17 @@
 // look for updates: they download the new file beside themselves and restart into it.
 // Everywhere else the store or the packager updates the app.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use egui::RichText;
-use rubiyomi_core::theme::Scheme;
+use nsh_base::{AlertDialogResult, alert_dialog};
+use nsh_core::prelude::*;
 use rubiyomi_core::update::{self, Progress, Release, UpdateSettings};
 
-use crate::task::{self, Task};
-use crate::ui::m3::{self, c, font, text};
+use crate::ui;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(not(feature = "update-check"), allow(dead_code))]
 enum Build {
     // The AppImage file, not the binary mounted from it.
     AppImage(PathBuf),
@@ -23,7 +23,6 @@ enum Build {
 }
 
 impl Build {
-    #[cfg(feature = "update-check")]
     fn detect() -> Option<Build> {
         if cfg!(target_os = "android") {
             return None;
@@ -35,11 +34,6 @@ impl Build {
             return None;
         }
         std::env::var_os("APPIMAGE").map(PathBuf::from).filter(|p| p.is_file()).map(Build::AppImage)
-    }
-
-    #[cfg(not(feature = "update-check"))]
-    fn detect() -> Option<Build> {
-        None
     }
 
     fn suffix(&self) -> &'static str {
@@ -117,165 +111,188 @@ pub enum Status {
     Checking,
     UpToDate,
     Available(Release),
-    Downloading(Release),
-    // The new version is starting.
-    Done,
-    // With the release when it was its download that failed, for the pop-up to offer again.
+    // With the percent done, once the size is known.
+    Downloading(Release, Option<u32>),
+    // With the release when it was its download that failed.
     Failed(String, Option<Release>),
 }
 
+#[derive(Clone)]
 pub struct Updates {
-    build: Option<Build>,
+    build: Build,
     data_dir: PathBuf,
-    pub settings: UpdateSettings,
-    pub status: Status,
-    // The pop-up was answered with Later, or not asked for.
-    quiet: bool,
-    progress: Progress,
-    checking: Option<Task<Result<Release, String>>>,
-    downloading: Option<Task<Result<PathBuf, String>>>,
+    pub check_on_start: Signal<bool>,
+    pub status: Signal<Status>,
+    // The app's root: checks and downloads go on when the screen that started them closes.
+    owner: Owner,
+}
+
+// The updates of this build, if it is one that looks for them.
+pub fn get() -> Option<Updates> {
+    use_context::<Updates>()
+}
+
+// At the app's start: provides the updates to the settings, and checks if that's wanted.
+pub fn start(data_dir: PathBuf) {
+    let Some(build) = Build::detect() else { return };
+    let settings = UpdateSettings::load(&data_dir);
+    let updates =
+        Updates { build, data_dir, check_on_start: signal(settings.check_on_start), status: signal(Status::Idle), owner: Owner::current() };
+    provide_context(updates.clone());
+    if settings.check_on_start {
+        updates.check(false);
+    }
 }
 
 impl Updates {
-    pub fn new(ctx: &egui::Context, data_dir: PathBuf) -> Self {
-        let mut me = Updates {
-            build: Build::detect(),
-            settings: UpdateSettings::load(&data_dir),
-            data_dir,
-            status: Status::Idle,
-            quiet: false,
-            progress: Progress::default(),
-            checking: None,
-            downloading: None,
-        };
-        if me.available() && me.settings.check_on_start {
-            me.check(ctx);
-        }
-        me
+    fn busy(&self) -> bool {
+        self.status.with_untracked(|s| matches!(s, Status::Checking | Status::Downloading(..)))
     }
 
-    // Whether this build looks for updates at all, so their settings are worth showing.
-    pub fn available(&self) -> bool {
-        self.build.is_some()
-    }
-
-    pub fn set_check_on_start(&mut self, on: bool) {
-        self.settings.check_on_start = on;
-        if let Err(e) = self.settings.save(&self.data_dir) {
+    pub fn set_check_on_start(&self, on: bool) {
+        self.check_on_start.set(on);
+        if let Err(e) = (UpdateSettings { check_on_start: on }).save(&self.data_dir) {
             log::warn!("saving the update settings: {e}");
         }
     }
 
-    pub fn check(&mut self, ctx: &egui::Context) {
-        if !self.available() || self.checking.is_some() || self.downloading.is_some() {
+    // `asked`: from Check now, so the page says how it went; at the start only a newer release speaks up.
+    pub fn check(&self, asked: bool) {
+        if self.busy() {
             return;
         }
-        self.status = Status::Checking;
-        self.quiet = false;
+        self.status.set(Status::Checking);
         // A pretend release from tool/update-feed.py.
         let feed = std::env::var("RUBIYOMI_UPDATE_URL").ok();
-        self.checking = Some(Task::spawn(ctx, move || update::latest(feed.as_deref())));
+        let me = self.clone();
+        self.owner.run(|| {
+            spawn(async move {
+                let answer = blocking(move || update::latest(feed.as_deref())).await.unwrap_or_else(|e| Err(e.to_string()));
+                match answer {
+                    Ok(release) if update::newer(release.version(), env!("CARGO_PKG_VERSION")) => {
+                        me.status.set(Status::Available(release.clone()));
+                        me.offer(release);
+                    }
+                    Ok(_) => me.status.set(Status::UpToDate),
+                    Err(e) => {
+                        log::info!("update check: {e}");
+                        me.status.set(if asked { Status::Failed(e, None) } else { Status::Idle });
+                    }
+                }
+            });
+        });
     }
 
-    fn download(&mut self, ctx: &egui::Context, release: Release) {
-        let Some(build) = self.build.clone() else { return };
-        let folder = build.folder();
-        let progress = Progress::default();
-        self.progress = progress.clone();
-        self.status = Status::Downloading(release.clone());
-        self.downloading = Some(Task::spawn(ctx, move || {
-            let name = release.asset(build.suffix()).map(|a| a.name.clone()).ok_or("this release has no file for this computer")?;
-            std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
-            let to = folder.join(name);
-            update::download(&release, build.suffix(), &to, &progress)?;
-            Ok(to)
-        }));
+    fn offer(&self, release: Release) {
+        let notes = release.notes.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or("No release notes.");
+        let answer = alert_dialog()
+            .title(format!("Rubiyomi {} is out", release.version()))
+            .description(notes.to_owned())
+            .cancel("later", "Later")
+            .action("download", "Download")
+            .show();
+        self.on_answer(answer, release, "download");
     }
 
-    pub fn poll(&mut self, ctx: &egui::Context) {
-        if let Some(answer) = task::take(&mut self.checking) {
-            self.status = match answer {
-                Ok(release) if update::newer(release.version(), env!("CARGO_PKG_VERSION")) => Status::Available(release),
-                Ok(_) => Status::UpToDate,
-                Err(e) => {
-                    log::info!("update check: {e}");
-                    Status::Failed(e, None)
+    fn on_answer(&self, answer: impl Future<Output = Result<AlertDialogResult, String>> + 'static, release: Release, go: &'static str) {
+        let me = self.clone();
+        self.owner.run(|| {
+            spawn(async move {
+                if answer.await.ok().and_then(|r| r.action).as_deref() == Some(go) {
+                    me.download(release);
                 }
-            };
-        }
-        if let Some(done) = task::take(&mut self.downloading) {
-            let release = self.offered().cloned();
-            let started = done.and_then(|new| self.build.as_ref().map_or(Ok(()), |b| b.restart(&new)));
-            match started {
-                Ok(()) => {
-                    self.status = Status::Done;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                Err(e) => {
-                    log::warn!("update: {e}");
-                    self.status = Status::Failed(e, release);
-                }
-            }
-        }
-        if matches!(self.status, Status::Downloading(_)) {
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
-        }
+            });
+        });
     }
 
-    // The pop-up offering a newer release, and following its download.
-    pub fn popup(&mut self, ctx: &egui::Context, s: &Scheme) {
-        if self.quiet {
+    pub fn download(&self, release: Release) {
+        if self.busy() {
             return;
         }
-        let Some(release) = self.offered().cloned() else { return };
-        let mut later = false;
-        let mut go = false;
-        egui::Modal::new(egui::Id::new("update-available")).show(ctx, |ui| {
-            m3::show_next_frame(ui);
-            ui.set_width(400.0_f32.min(ctx.content_rect().width() - 48.0));
-            ui.label(
-                RichText::new(format!("Rubiyomi {} is available", release.version()))
-                    .font(font(text::HEADLINE_SMALL))
-                    .color(c(s.on_surface)),
-            );
-            ui.add_space(12.0);
-            let notes = release.notes.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or("No release notes.");
-            egui::ScrollArea::vertical().max_height((ctx.content_rect().height() * 0.5).min(320.0)).show(ui, |ui| {
-                ui.label(RichText::new(notes).font(font(text::BODY_MEDIUM)).color(c(s.on_surface_variant)));
-            });
-            ui.add_space(16.0);
-            match &self.status {
-                Status::Downloading(_) => {
-                    let fraction = self.progress.fraction();
-                    ui.add(egui::ProgressBar::new(fraction.unwrap_or(0.0)).animate(fraction.is_none()));
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Downloading and checking…").font(font(text::BODY_SMALL)).color(c(s.on_surface_variant)));
-                }
-                status => {
-                    if let Status::Failed(e, _) = status {
-                        ui.label(RichText::new(format!("Couldn't update: {e}")).font(font(text::BODY_MEDIUM)).color(c(s.error)));
-                        ui.add_space(8.0);
+        let (build, progress) = (self.build.clone(), Progress::default());
+        let (me, status) = (self.clone(), self.status);
+        let version = release.version().to_owned();
+        status.set(Status::Downloading(release.clone(), None));
+        ui::snackbar(format!("Downloading Rubiyomi {version}\u{2026}"));
+        self.owner.run(|| {
+            let (shown, said) = (progress.clone(), version.clone());
+            let watch = set_interval(Duration::from_secs(1), move || {
+                let percent = shown.fraction().map(|f| (f * 100.0) as u32);
+                let done = percent.map(|p| format!(", {p}%")).unwrap_or_default();
+                ui::snackbar(format!("Downloading Rubiyomi {said}{done}\u{2026}"));
+                status.update(|s| {
+                    if let Status::Downloading(_, p) = s {
+                        *p = percent;
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        go = m3::filled_button(ui, s, "Update").clicked();
-                        ui.add_space(8.0);
-                        later = m3::text_button(ui, s, "Later").clicked();
-                    });
+                });
+            });
+            spawn(async move {
+                let job = release.clone();
+                let saved = blocking(move || {
+                    let name = job.asset(build.suffix()).map(|a| a.name.clone()).ok_or("this release has no file for this computer")?;
+                    let folder = build.folder();
+                    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+                    let to = folder.join(name);
+                    update::download(&job, build.suffix(), &to, &progress)?;
+                    build.restart(&to)
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+                watch.cancel();
+                match saved {
+                    Ok(()) => nsh_core::element::desktop::quit(),
+                    Err(e) => {
+                        log::warn!("update: {e}");
+                        status.set(Status::Failed(e.clone(), Some(release.clone())));
+                        let answer = alert_dialog()
+                            .title("Couldn't update")
+                            .description(format!("Rubiyomi {version}: {e}"))
+                            .cancel("later", "Later")
+                            .action("retry", "Try again")
+                            .show();
+                        me.on_answer(answer, release, "retry");
+                    }
+                }
+            });
+        });
+    }
+}
+
+// The Updates page of the settings.
+pub fn page(updates: Updates) -> AnyElement {
+    let (on, status) = (updates.check_on_start, updates.status);
+    let switch = updates.clone();
+    view()
+        .child(ui::switch_row(
+            "Check when it starts",
+            "Looks for a new version on GitHub",
+            move || on.get(),
+            move |v| switch.set_check_on_start(v),
+        ))
+        .child(dynamic(move || {
+            let updates = updates.clone();
+            let check = |said: Option<AnyElement>| {
+                let updates = updates.clone();
+                view().child(said).child(ui::button_row("Check now", move || updates.check(true))).into_element()
+            };
+            let download = |said: AnyElement, label: &'static str, release: Release| {
+                let updates = updates.clone();
+                view().child(said).child(ui::button_row(label, move || updates.download(release.clone()))).into_element()
+            };
+            match status.get() {
+                Status::Idle => check(None),
+                Status::Checking => ui::hint("Checking\u{2026}").into_element(),
+                Status::UpToDate => {
+                    check(Some(ui::hint(concat!("Rubiyomi ", env!("CARGO_PKG_VERSION"), " is the newest.")).into_element()))
+                }
+                Status::Failed(e, None) => check(Some(ui::error(format!("Couldn't check: {e}")).into_element())),
+                Status::Available(r) => download(ui::hint(format!("Rubiyomi {} is out.", r.version())).into_element(), "Download", r),
+                Status::Failed(e, Some(r)) => download(ui::error(format!("Couldn't update: {e}")).into_element(), "Try again", r),
+                Status::Downloading(r, percent) => {
+                    let done = percent.map(|p| format!(", {p}%")).unwrap_or_default();
+                    ui::hint(format!("Downloading Rubiyomi {}{done}\u{2026}", r.version())).into_element()
                 }
             }
-        });
-        if later {
-            self.quiet = true;
-        } else if go {
-            self.download(ctx, release);
-        }
-    }
-
-    // The release the pop-up is about, kept while it downloads and after a failed try.
-    fn offered(&self) -> Option<&Release> {
-        match &self.status {
-            Status::Available(r) | Status::Downloading(r) | Status::Failed(_, Some(r)) => Some(r),
-            _ => None,
-        }
-    }
+        }))
+        .into_element()
 }
