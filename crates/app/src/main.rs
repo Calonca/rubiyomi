@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
+// No console window beside the app on Windows.
+#![windows_subsystem = "windows"]
+
+#[cfg(target_os = "linux")]
 use nsh_platform_linux as platform;
+#[cfg(windows)]
+use nsh_platform_windows as platform;
 
 // `RUBIYOMI_WINDOW=WxH` opens the window at that size; the headless runs use it.
 fn window_size() -> (i32, i32) {

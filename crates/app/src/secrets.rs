@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
-// Where keys are kept on the desktop: the Secret Service, and nowhere else. Without one a key
-// isn't kept, and is asked again. On Android they go to the Keystore, through android.rs.
+// Where keys are kept on the desktop: the Secret Service on Linux, the Credential Manager on
+// Windows, and nowhere else. Without one a key isn't kept, and is asked again. On Android they
+// go to the Keystore, through android.rs.
 
-#[cfg(any(test, feature = "dev-hooks"))]
+#[cfg(any(test, feature = "dev-hooks", feature = "desktop"))]
 use std::collections::HashMap;
 #[cfg(any(test, feature = "dev-hooks"))]
 use std::io::Write;
@@ -22,16 +23,25 @@ mod keyring {
 
     pub fn available() -> bool {
         static READY: OnceLock<bool> = OnceLock::new();
-        *READY.get_or_init(|| match zbus_secret_service_keyring_store::Store::new() {
-            Ok(store) => {
-                keyring_core::set_default_store(store);
-                true
-            }
+        *READY.get_or_init(|| match native_store() {
+            Ok(()) => true,
             Err(e) => {
                 log::info!("no keyring ({e}); keys won't be kept");
                 false
             }
         })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn native_store() -> Result<(), String> {
+        keyring_core::set_default_store(zbus_secret_service_keyring_store::Store::new().map_err(|e| e.to_string())?);
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn native_store() -> Result<(), String> {
+        keyring_core::set_default_store(windows_native_keyring_store::Store::new().map_err(|e| e.to_string())?);
+        Ok(())
     }
 
     pub fn get(name: &str) -> Result<Option<String>, String> {
@@ -73,6 +83,7 @@ impl Secrets {
         let _ = dir;
         #[cfg(feature = "desktop")]
         if keyring::available() {
+            move_old_file(dir);
             return Secrets(Store::Keyring);
         }
         Secrets(Store::Nowhere)
@@ -112,6 +123,28 @@ impl Secrets {
             }
             Store::Nowhere => Err("this system has no keyring".to_owned()),
         }
+    }
+}
+
+// The egui app kept keys in this file where it found no keyring. They go to the keyring, unless
+// it already has one by that name, and the file goes.
+#[cfg(feature = "desktop")]
+fn move_old_file(dir: &Path) {
+    let path = dir.join("secrets.json");
+    let old: HashMap<String, String> = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        Err(_) => return,
+    };
+    for (name, value) in old.iter().filter(|(_, v)| !v.is_empty()) {
+        if let Ok(None) = keyring::get(name)
+            && let Err(e) = keyring::set(name, value)
+        {
+            return log::warn!("moving {name} to the keyring: {e}");
+        }
+    }
+    match std::fs::remove_file(&path) {
+        Ok(()) => log::info!("moved the keys of secrets.json to the keyring"),
+        Err(e) => log::warn!("removing secrets.json: {e}"),
     }
 }
 

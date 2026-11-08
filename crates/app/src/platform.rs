@@ -106,6 +106,9 @@ impl Default for NshPlatform {
 }
 
 fn desktop_data_dir() -> PathBuf {
+    if cfg!(windows) {
+        return std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("Rubiyomi");
+    }
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -131,13 +134,40 @@ fn read_asset(zip_path: &Path, name: &str) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-fn desktop_dict(name: &str) -> Option<std::fs::File> {
+#[cfg(feature = "embed-dict")]
+fn embedded(name: &str) -> Option<&'static [u8]> {
+    macro_rules! dict {
+        ($file:literal) => {
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../dist/dict/", $file))
+        };
+    }
+    Some(match name {
+        "jmdict.sqlite.xz" => dict!("jmdict.sqlite.xz"),
+        "ipadic.tar.xz" => dict!("ipadic.tar.xz"),
+        "version.json" => dict!("version.json"),
+        "DATA-LICENCE.txt" => dict!("DATA-LICENCE.txt"),
+        _ => return None,
+    })
+}
+
+// Beside the binary for a download (the AppImage has them in usr/share), else in the clone.
+fn desktop_dict(name: &str) -> Option<Box<dyn Read + Send>> {
+    #[cfg(feature = "embed-dict")]
+    if let Some(bytes) = embedded(name) {
+        return Some(Box::new(Cursor::new(bytes)));
+    }
     let mut dirs = Vec::new();
     if let Some(env) = std::env::var_os("RUBIYOMI_DICT_DIR") {
         dirs.push(PathBuf::from(env));
     }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        dirs.push(dir.join("dict"));
+        dirs.push(dir.join("../share/rubiyomi/dict"));
+    }
     dirs.push(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../dist/dict")));
-    dirs.into_iter().find_map(|d| std::fs::File::open(d.join(name)).ok())
+    dirs.into_iter().find_map(|d| std::fs::File::open(d.join(name)).ok()).map(|f| Box::new(f) as Box<dyn Read + Send>)
 }
 
 impl Platform for NshPlatform {
@@ -150,7 +180,7 @@ impl Platform for NshPlatform {
             let bytes = read_asset(apk, &format!("assets/dict/{name}"))?;
             return Some(Box::new(Cursor::new(bytes)));
         }
-        desktop_dict(name).map(|f| Box::new(f) as Box<dyn Read + Send>)
+        desktop_dict(name)
     }
 
     fn accent_color(&self) -> Option<u32> {
