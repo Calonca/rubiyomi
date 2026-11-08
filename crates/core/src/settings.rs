@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Alessandro La Conca
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::cards::CardState;
 use crate::grade::anki::AnkiMapping;
 use crate::library::fsutil::{read_json_or_default, write_json};
 use crate::platform::Platform;
@@ -76,6 +78,27 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::tempdir;
+
+    #[test]
+    fn a_page_file_from_before_palettes_loads_as_full() {
+        let dir = tempdir("old-page");
+        std::fs::write(dir.join("page.json"), r#"{"font_size": 31.0, "colours": "underline"}"#).unwrap();
+        let page = PageSettings::load(&dir);
+        assert_eq!((page.font_size, page.colours), (31.0, WordColours::Underline));
+        assert_eq!(page.palette, WordPalette::Full);
+        assert!(page.custom_colours.is_empty());
+    }
+
+    #[test]
+    fn a_custom_palette_survives_a_restart() {
+        let dir = tempdir("custom-page");
+        let mut page = PageSettings { palette: WordPalette::Custom, ..PageSettings::default() };
+        page.custom_colours.insert(CardState::NeverForget, Some([0x123456, 0xabcdef]));
+        page.custom_colours.insert(CardState::Due, None);
+        page.save(&dir).unwrap();
+        assert_eq!(PageSettings::load(&dir), page);
+    }
 
     #[test]
     fn keys_never_reach_the_file() {
@@ -141,6 +164,32 @@ pub enum WordColours {
     Text,
 }
 
+// Which colours the words get; `WordColours` says how they are drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WordPalette {
+    #[default]
+    Full,
+    Minimal,
+    Custom,
+}
+
+impl WordPalette {
+    pub const ALL: [WordPalette; 3] = [WordPalette::Full, WordPalette::Minimal, WordPalette::Custom];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WordPalette::Full => "Full",
+            WordPalette::Minimal => "Minimal",
+            WordPalette::Custom => "Custom",
+        }
+    }
+}
+
+// The states changed in the custom palette: an RGB for light pages and one for dark pages, or
+// None for plain ink. A state not here keeps its full colour.
+pub type CustomColours = HashMap<CardState, Option<[u32; 2]>>;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Typeface {
@@ -164,6 +213,8 @@ pub struct PageSettings {
     pub typeface: Typeface,
     pub furigana: Furigana,
     pub colours: WordColours,
+    pub palette: WordPalette,
+    pub custom_colours: CustomColours,
     pub tap_to_turn: bool,
     pub keep_awake: bool,
     // The page number and the percentage read, under the page.
@@ -183,6 +234,8 @@ impl Default for PageSettings {
             typeface: Typeface::Sans,
             furigana: Furigana::Show,
             colours: WordColours::Text,
+            palette: WordPalette::Full,
+            custom_colours: CustomColours::new(),
             tap_to_turn: false,
             keep_awake: true,
             show_position: false,

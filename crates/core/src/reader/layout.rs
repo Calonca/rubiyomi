@@ -6,6 +6,11 @@ use super::runs::Run;
 
 pub trait Measure {
     fn advance(&self, text: &str, size: f32) -> f32;
+
+    // A reading wider than its word hangs over its neighbours instead of spacing the word out.
+    fn ruby_overhangs(&self) -> bool {
+        false
+    }
 }
 
 pub struct FixedMeasure;
@@ -330,7 +335,7 @@ fn ruby_unit(
         at += advance;
     }
     let extent = if cfg.vertical { ruby.chars().count() as f32 * ruby_size } else { measure.advance(ruby, ruby_size) };
-    let width = at.max(extent);
+    let width = if measure.ruby_overhangs() { at } else { at.max(extent) };
     if width > cfg.line_length(size) {
         return None;
     }

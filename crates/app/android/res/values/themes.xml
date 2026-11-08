@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Copyright (C) 2026 Alessandro La Conca -->
+<resources>
+    <!-- The colour behind the icon, so nothing flashes white before the first frame. -->
+    <color name="rubiyomi_background">#1F1B16</color>
+    <style name="Rubiyomi" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/rubiyomi_background</item>
+    </style>
+</resources>

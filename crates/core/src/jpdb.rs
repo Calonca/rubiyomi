@@ -211,33 +211,51 @@ impl JpdbClient {
     pub fn chapter_words(&self, chapter: &crate::text::Chapter) -> Result<Vec<crate::finder::Word>, JpdbError> {
         const BATCH: usize = 4000;
         let mut all = Vec::new();
-        let (mut texts, mut starts, mut size) = (Vec::new(), Vec::new(), 0);
+        let (mut batch, mut size) = (Vec::new(), 0);
         let mut start = 0;
-        let mut send = |texts: &mut Vec<String>, starts: &mut Vec<usize>| -> Result<(), JpdbError> {
-            for (words, at) in self.parse_words(texts)?.into_iter().zip(starts.iter()) {
-                all.extend(words.into_iter().map(|mut w| {
-                    w.start += at;
-                    w
-                }));
-            }
-            texts.clear();
-            starts.clear();
-            Ok(())
-        };
         for b in &chapter.blocks {
             if let Some(t) = b.as_text().filter(|t| !t.text.trim().is_empty()) {
-                texts.push(t.text.clone());
-                starts.push(start);
-                size += t.text.chars().count();
-                if size >= BATCH {
-                    send(&mut texts, &mut starts)?;
+                let chars = t.text.chars().count();
+                if size + chars > BATCH {
+                    self.words_of(&std::mem::take(&mut batch), &mut all)?;
                     size = 0;
                 }
+                batch.push((t.text.clone(), start));
+                size += chars;
             }
             start += b.char_len();
         }
-        send(&mut texts, &mut starts)?;
+        self.words_of(&batch, &mut all)?;
         Ok(all)
+    }
+
+    // jpdb.io doesn't say how much text it takes, so what it finds too long goes again in halves.
+    fn words_of(&self, texts: &[(String, usize)], all: &mut Vec<crate::finder::Word>) -> Result<(), JpdbError> {
+        let plain: Vec<String> = texts.iter().map(|(t, _)| t.clone()).collect();
+        match self.parse_words(&plain) {
+            Ok(found) => {
+                for (words, (_, at)) in found.into_iter().zip(texts) {
+                    all.extend(words.into_iter().map(|mut w| {
+                        w.start += at;
+                        w
+                    }));
+                }
+                Ok(())
+            }
+            Err(JpdbError::Api(message)) if message.contains("too long") => {
+                let (first, second) = match texts {
+                    [(text, at)] if text.chars().count() > 1 => split_text(text, *at),
+                    [_] => return Err(JpdbError::Api(message)),
+                    _ => {
+                        let (a, b) = texts.split_at(texts.len() / 2);
+                        (a.to_vec(), b.to_vec())
+                    }
+                };
+                self.words_of(&first, all)?;
+                self.words_of(&second, all)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn review(&self, ids: JpdbIds, grade: Review) -> Result<(), JpdbError> {
@@ -326,6 +344,20 @@ fn api_error(status: u16, body: &str) -> JpdbError {
     JpdbError::Api(message.to_owned())
 }
 
+type Located = Vec<(String, usize)>;
+
+// Two parts at the sentence end nearest the middle, so no word is cut when there is one.
+fn split_text(text: &str, at: usize) -> (Located, Located) {
+    let chars: Vec<char> = text.chars().collect();
+    let middle = chars.len() / 2;
+    let cut = (1..chars.len())
+        .filter(|&i| matches!(chars[i - 1], '。' | '！' | '？' | '!' | '?' | '\n'))
+        .min_by_key(|&i| i.abs_diff(middle))
+        .unwrap_or(middle);
+    let part = |c: &[char]| c.iter().collect::<String>();
+    (vec![(part(&chars[..cut]), at)], vec![(part(&chars[cut..]), at + cut)])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +384,47 @@ mod tests {
         assert_eq!(w, [(0, 2, "羅生"), (3, 2, "下人")]);
         assert_eq!(words[0][1].meanings, ["servant", "menial"]);
         assert_eq!(words[0][1].jmdict_id, Some(1538750));
+    }
+
+    #[test]
+    fn a_text_found_too_long_goes_again_in_parts_at_sentence_ends() {
+        // The opening of 吾輩は猫である (Natsume Soseki, Aozora Bunko), a paragraph too long for one text.
+        let sentence = "吾輩は猫である。";
+        let long = sentence.repeat(100);
+        let mock = Mock::new(|r| {
+            let body: Value = serde_json::from_str(&r.body).unwrap();
+            let texts = body["text"].as_array().unwrap();
+            let size: usize = texts.iter().map(|t| t.as_str().unwrap().chars().count()).sum();
+            if size > 100 {
+                let refused = json!({ "error": "bad_request", "error_message": "'text' is too long" }).to_string();
+                return Ok(Response { status: 400, body: refused, retry_after: None });
+            }
+            let tokens: Vec<Value> = texts.iter().map(|_| json!([[0, 0, 1]])).collect();
+            Ok(Response::ok(json!({ "tokens": tokens, "vocabulary": [[1, "吾", "われ", ["I"], ["n"]]] }).to_string()))
+        });
+        let client = JpdbClient::with_transport("key", mock.clone());
+        let chapter = crate::text::Chapter {
+            title: String::new(),
+            blocks: vec![
+                crate::text::Block::Text(crate::text::TextBlock::plain("吾輩")),
+                crate::text::Block::Text(crate::text::TextBlock::plain(long)),
+            ],
+        };
+
+        let words = client.chapter_words(&chapter).unwrap();
+
+        let all: Vec<char> = format!("吾輩{}", sentence.repeat(100)).chars().collect();
+        let starts: Vec<usize> = words.iter().map(|w| w.start).collect();
+        assert!(starts.len() > 2, "{starts:?}");
+        assert!(starts.windows(2).all(|w| w[0] < w[1]), "{starts:?}");
+        assert!(starts.iter().all(|&at| all[at] == '吾'), "{starts:?}");
+        let sent: String = mock
+            .requests()
+            .iter()
+            .map(|r| serde_json::from_str::<Value>(&r.body).unwrap())
+            .filter(|b| b["text"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().chars().count()).sum::<usize>() <= 100)
+            .flat_map(|b| b["text"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_owned()).collect::<Vec<_>>())
+            .collect();
+        assert_eq!(sent.chars().collect::<Vec<_>>(), all);
     }
 }

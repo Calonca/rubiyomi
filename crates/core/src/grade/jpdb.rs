@@ -33,6 +33,9 @@ impl From<JpdbError> for GradeError {
     }
 }
 
+// Each vocabulary carries jpdb.io's own states; a word in a deck is Unknown until they're asked for.
+pub const STATES: &[CardState] = &CardState::ALL;
+
 // jpdb.io's vid is the JMdict entry id, so words found offline are matched to
 // the synced decks by it. A sync learns only which cards the decks hold, which
 // is quick; the states are asked for the words of the chapter being read, and
@@ -235,6 +238,15 @@ mod tests {
             };
             Ok(Response::ok(answer.to_string()))
         })
+    }
+
+    #[test]
+    fn every_listed_state_can_be_the_one_shown() {
+        assert_eq!(STATES.len(), 12);
+        for state in STATES {
+            assert_eq!(CardState::primary_of(&[*state]), *state);
+            assert_eq!(CardState::from_wire(state.wire()), *state);
+        }
     }
 
     fn word(spelling: &str, reading: &str, id: u32) -> Word {
