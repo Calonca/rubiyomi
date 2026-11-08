@@ -7,14 +7,17 @@ cards, so you see at a glance what you know; tap one for its reading and
 meanings, and grade or add its card without leaving the page. The dictionary
 is built in and works offline.
 
-https://github.com/user-attachments/assets/31a4f6e5-a92a-47f0-b96e-b2b12c2af77e
+https://github.com/user-attachments/assets/8972f027-74fc-486b-8b44-a324bd0987c4
 
 <p>
-  <img src="https://github.com/user-attachments/assets/8aaf9d79-5f65-4f47-bfcf-4b9fb8b80120" width="200" alt="Tap a word for its reading and meanings">
-  <img src="https://github.com/user-attachments/assets/d26624cd-ed7c-41d9-9c6f-490bcce3f4cc" width="200" alt="Words coloured by your Anki or jpdb.io cards">
-  <img src="https://github.com/user-attachments/assets/90365757-4352-4104-8c1b-efc69c2305ba" width="200" alt="The library of EPUB books">
-  <img src="https://github.com/user-attachments/assets/f3c0c159-cd3f-4289-baa0-e982b71d1a2d" width="200" alt="Vertical text and page themes">
+  <img src="https://github.com/user-attachments/assets/fe7b37bc-efde-4841-b619-e872f6628e36" width="200" alt="Tap a word for its reading and meanings">
+  <img src="https://github.com/user-attachments/assets/ec228224-ca25-4d3d-9d53-37634eaeafd5" width="200" alt="Words coloured by your Anki or jpdb.io cards">
+  <img src="https://github.com/user-attachments/assets/e4aebc65-cac2-4fb9-b507-2fe68d0c1255" width="200" alt="The library of EPUB books">
+  <img src="https://github.com/user-attachments/assets/6316c492-36b7-4a66-bcc8-bac06e52410b" width="200" alt="Vertical text and page themes">
 </p>
+
+
+
 
 ## Get it
 
