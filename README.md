@@ -108,9 +108,18 @@ tool/desktop.sh                   # the desktop app, target/desktop/fast/rubiyom
 tool/android.sh                   # Rubiyomi dev, target/apk/rubiyomi-dev.apk
 ```
 
-The desktop app is GTK 4 on Linux (it needs GTK 4's development files;
-`tool/gtk-dev.sh` unpacks them without installing anything, which
-`tool/desktop.sh` does when they're missing). The APK needs the Android SDK
+The desktop app is GTK 4 on Linux and needs GTK 4's development files.
+Install them the usual way:
+
+```sh
+sudo apt install libgtk-4-dev libgraphene-1.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev  # Debian, Ubuntu
+sudo dnf install gtk4-devel graphene-devel gstreamer1-devel gstreamer1-plugins-base-devel                # Fedora
+sudo pacman -S gtk4 graphene gstreamer gst-plugins-base-libs                                             # Arch
+```
+
+Without them, `tool/desktop.sh` runs `tool/gtk-dev.sh`, a convenience for
+Fedora, Debian and Ubuntu that unpacks the packages into `target/gtk-dev`
+without installing anything; elsewhere it says what to install. The APK needs the Android SDK
 (platform 36, build tools 36), NDK 28, a JDK and `cargo-ndk`; no Gradle.
 Rubiyomi dev is an app of its own beside the released one.
 
