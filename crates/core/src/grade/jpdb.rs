@@ -155,6 +155,13 @@ impl Grader for JpdbGrader {
             .collect()
     }
 
+    // jpdb.io tells states only of the words asked for, so this grows as chapters are read.
+    fn readable_kanji(&self) -> crate::gloss::Readable {
+        let synced = self.synced.lock().unwrap_or_else(|e| e.into_inner());
+        let studied = synced.values().flatten().filter(|v| crate::gloss::studied(CardState::primary_of(&v.states)));
+        crate::gloss::readable_of(studied.map(|v| v.spelling.as_str()))
+    }
+
     fn refresh(&self, words: &[Word]) -> Result<(), GradeError> {
         let mut ids: Vec<JpdbIds> = {
             let synced = self.synced.lock().unwrap_or_else(|e| e.into_inner());

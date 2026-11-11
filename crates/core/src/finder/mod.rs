@@ -20,7 +20,9 @@ use merge::{Merged, Morph, merge};
 
 // Bumped whenever `Finder::words` would split a text differently, or words carry more, so saved
 // words are found again.
-const WORDS_FORMAT: u32 = 2;
+const WORDS_FORMAT: u32 = 3;
+// The same for jpdb.io's words, apart: finding them again asks jpdb.io for the whole book.
+const JPDB_WORDS_FORMAT: u32 = 2;
 
 // What saved words were found with: the extractor, this finder and its dictionaries.
 pub fn words_tag(dict: &crate::dict::DictVersion) -> String {
@@ -29,7 +31,7 @@ pub fn words_tag(dict: &crate::dict::DictVersion) -> String {
 
 // Words found by jpdb.io, which keeps them with their meanings.
 pub fn jpdb_words_tag() -> String {
-    format!("jpdb-{}-{WORDS_FORMAT}", crate::library::EXTRACT_VERSION)
+    format!("jpdb-{}-{JPDB_WORDS_FORMAT}", crate::library::EXTRACT_VERSION)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,11 +49,18 @@ pub struct Word {
     // gave them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ruby: Vec<crate::text::Ruby>,
+    // A name, of a person or a place.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub name: bool,
 }
 
 impl Word {
     pub fn key(&self) -> WordKey {
         WordKey(format!("{}|{}", self.spelling, self.reading))
+    }
+
+    pub fn is_name(&self) -> bool {
+        self.name || self.pos.iter().any(|p| p.starts_with("name") || p == "n-pr")
     }
 }
 
@@ -118,6 +127,11 @@ impl Finder {
         morphs
     }
 
+    // The dictionary's entry of a word found before, by its id.
+    pub fn entry(&self, id: u32) -> Option<Entry> {
+        self.jmdict.lock().unwrap_or_else(|e| e.into_inner()).entry(id)
+    }
+
     pub fn word_at(&self, text: &str, at: usize) -> Option<Word> {
         let merged = merge(&self.morphs(text));
         let w = merged.into_iter().find(|w| (w.start..w.start + w.len).contains(&at))?;
@@ -177,7 +191,7 @@ fn jmdict_pos(ipadic: &str) -> &'static [&'static str] {
 }
 
 fn word(w: &Merged, surface: &str, reading: &str, entry: Option<&Entry>) -> Word {
-    let mut out = Word { start: w.start, len: w.len, spelling: w.base.clone(), ..Word::default() };
+    let mut out = Word { start: w.start, len: w.len, spelling: w.base.clone(), name: w.proper, ..Word::default() };
     match entry {
         Some(e) => {
             out.spelling = e

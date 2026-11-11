@@ -100,12 +100,7 @@ pub fn over_text(text: &str, spelling: &str, reading: &str) -> Vec<(Range<usize>
 // `words` are in chapter order. A run of kanji broken over two lines gets its reading over the
 // longer piece.
 pub fn on_page(page: &Page, words: &[Word], cfg: &LayoutConfig, measure: &dyn Measure) -> Vec<PlacedRuby> {
-    let mut at: HashMap<usize, &PlacedGlyph> = HashMap::new();
-    for g in &page.glyphs {
-        for offset in g.offset..g.offset + g.len.max(1) {
-            at.insert(offset, g);
-        }
-    }
+    let at = glyphs_by_offset(page);
     let first = words.partition_point(|w| w.start + w.len <= page.start);
     let mut out = Vec::new();
     for w in words[first..].iter().take_while(|w| w.start < page.end) {
@@ -116,13 +111,31 @@ pub fn on_page(page: &Page, words: &[Word], cfg: &LayoutConfig, measure: &dyn Me
         let given = w.ruby.iter().map(|r| (r.start as usize..(r.start + r.len) as usize, r.text.clone())).filter(|(r, _)| r.end <= w.len);
         let readings: Vec<_> = if w.ruby.is_empty() { over_text(&text, &w.spelling, &w.reading) } else { given.collect() };
         for (range, reading) in readings {
-            out.extend(place(&glyphs[range], reading, cfg, measure));
+            out.extend(place(&glyphs[range], reading, false, cfg, measure));
         }
     }
     out
 }
 
-fn place(glyphs: &[&PlacedGlyph], reading: String, cfg: &LayoutConfig, measure: &dyn Measure) -> Option<PlacedRuby> {
+// The glyphs of the page by the chapter offsets they stand for.
+pub(crate) fn glyphs_by_offset(page: &Page) -> HashMap<usize, &PlacedGlyph> {
+    let mut at: HashMap<usize, &PlacedGlyph> = HashMap::new();
+    for g in &page.glyphs {
+        for offset in g.offset..g.offset + g.len.max(1) {
+            at.insert(offset, g);
+        }
+    }
+    at
+}
+
+// English is read along the line, so in a column it runs down it, turned.
+pub(crate) fn place(
+    glyphs: &[&PlacedGlyph],
+    reading: String,
+    gloss: bool,
+    cfg: &LayoutConfig,
+    measure: &dyn Measure,
+) -> Option<PlacedRuby> {
     let line = |g: &PlacedGlyph| if cfg.vertical { g.rect.x } else { g.rect.y };
     let mut pieces: Vec<Vec<&PlacedGlyph>> = Vec::new();
     for g in glyphs {
@@ -140,14 +153,14 @@ fn place(glyphs: &[&PlacedGlyph], reading: String, cfg: &LayoutConfig, measure: 
     let ruby = size * cfg.ruby_scale;
     let rect = if cfg.vertical {
         let (top, bottom) = piece.iter().fold((f32::MAX, f32::MIN), |(t, b), g| (t.min(g.rect.y), b.max(g.rect.bottom())));
-        let extent = reading.chars().count() as f32 * ruby;
+        let extent = if gloss { measure.advance(&reading, ruby) } else { reading.chars().count() as f32 * ruby };
         Rect { x: first.rect.x + size, y: top + (bottom - top - extent) / 2.0, w: ruby, h: extent }
     } else {
         let (left, right) = piece.iter().fold((f32::MAX, f32::MIN), |(l, r), g| (l.min(g.rect.x), r.max(g.rect.right())));
         let extent = measure.advance(&reading, ruby);
         Rect { x: left + (right - left - extent) / 2.0, y: first.rect.y - ruby, w: extent, h: ruby }
     };
-    Some(PlacedRuby { text: reading, rect, size: ruby, block: first.block, run: first.run, offset: first.offset, generated: true })
+    Some(PlacedRuby { text: reading, rect, size: ruby, block: first.block, run: first.run, offset: first.offset, generated: true, gloss })
 }
 
 // Readings side by side on a line that would run into each other are made smaller, each around
@@ -277,6 +290,7 @@ mod tests {
             run: 0,
             offset: 0,
             generated: true,
+            gloss: false,
         };
         let mut ruby = vec![at(0.0, 40.0), at(30.0, 40.0), at(200.0, 20.0)];
         fit(&mut ruby, false);

@@ -6,6 +6,7 @@ pub mod dict;
 pub mod epub;
 pub mod finder;
 pub mod furigana;
+pub mod gloss;
 pub mod grade;
 pub mod history;
 pub mod http;

@@ -28,6 +28,8 @@ pub struct Merged {
     pub base: String,
     pub reading: String,
     pub pos: String,
+    // A name of a person, place or the like (IPADIC's 固有名詞).
+    pub proper: bool,
 }
 
 fn bends(head: &Morph, suru: bool) -> bool {
@@ -80,7 +82,14 @@ pub fn merge(morphs: &[Morph]) -> Vec<Merged> {
         let reading =
             if group.iter().all(|m| !m.reading.is_empty()) { group.iter().map(|m| m.reading.as_str()).collect() } else { String::new() };
         let last = &group[group.len() - 1];
-        out.push(Merged { start: head.start, len: last.start + last.len - head.start, base, reading, pos: head.pos[0].clone() });
+        out.push(Merged {
+            start: head.start,
+            len: last.start + last.len - head.start,
+            base,
+            reading,
+            pos: head.pos[0].clone(),
+            proper: head.sub("固有名詞"),
+        });
         i = j;
     }
     out

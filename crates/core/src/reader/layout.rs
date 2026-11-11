@@ -4,6 +4,9 @@
 use super::kinsoku;
 use super::runs::Run;
 
+// The size of a word's English set in place of it, to the text's.
+pub const GLOSS_SCALE: f32 = 0.8;
+
 pub trait Measure {
     fn advance(&self, text: &str, size: f32) -> f32;
 
@@ -122,6 +125,8 @@ pub struct PlacedGlyph {
     pub offset: usize,
     pub len: usize,
     pub run: usize,
+    // English standing for the `len` chars of a word.
+    pub gloss: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -134,6 +139,8 @@ pub struct PlacedRuby {
     // Where the text it stands over starts, as a chapter offset.
     pub offset: usize,
     pub generated: bool,
+    // English, read along the line rather than a glyph at a time.
+    pub gloss: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -194,6 +201,7 @@ struct UnitGlyph {
     offset: usize,
     len: usize,
     run: usize,
+    gloss: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -224,7 +232,7 @@ impl Unit {
         Unit {
             advance,
             space: kinsoku::is_space(first) && len == 1,
-            glyphs: vec![UnitGlyph { text, at: 0.0, advance, form, offset, len, run }],
+            glyphs: vec![UnitGlyph { text, at: 0.0, advance, form, offset, len, run, gloss: false }],
             ruby: None,
             first,
             last,
@@ -262,6 +270,10 @@ fn units_of(
             continue;
         }
         let whole = start == run.start && end == run.end();
+        if let (true, Some(english)) = (whole, &run.swap) {
+            units.push(gloss_unit(english, base + start, end - start, r, size, cfg, measure));
+            continue;
+        }
         if let (true, true, Some(ruby)) = (cfg.show_ruby, whole, run.ruby.as_deref().filter(|r| !r.is_empty()))
             && let Some(unit) = ruby_unit(&chars[start..end], base + start, r, ruby, run.generated, size, cfg, measure)
         {
@@ -271,6 +283,15 @@ fn units_of(
         plain_units(&chars[start..end], base + start, r, size, cfg, measure, &mut units);
     }
     units
+}
+
+// A word's English as one glyph, along the line also in a column, with a little air either side.
+fn gloss_unit(english: &str, offset: usize, len: usize, run: usize, size: f32, cfg: &LayoutConfig, measure: &dyn Measure) -> Unit {
+    let advance = (measure.advance(english, size * GLOSS_SCALE) + size * 0.3).min(cfg.line_length(size));
+    let form = if cfg.vertical { Form::Rotated } else { Form::Upright };
+    let mut unit = Unit::single(english.to_owned(), advance, form, offset, len, run);
+    unit.glyphs[0].gloss = true;
+    unit
 }
 
 fn plain_units(chars: &[char], base: usize, run: usize, size: f32, cfg: &LayoutConfig, measure: &dyn Measure, units: &mut Vec<Unit>) {
@@ -333,7 +354,7 @@ fn ruby_unit(
     for (i, &c) in chars.iter().enumerate() {
         let s = c.to_string();
         let (advance, form) = if cfg.vertical { (size, column_form(c)) } else { (measure.advance(&s, size), Form::Upright) };
-        glyphs.push(UnitGlyph { text: s, at, advance, form, offset: base + i, len: 1, run });
+        glyphs.push(UnitGlyph { text: s, at, advance, form, offset: base + i, len: 1, run, gloss: false });
         at += advance;
     }
     let extent = if cfg.vertical { ruby.chars().count() as f32 * ruby_size } else { measure.advance(ruby, ruby_size) };
@@ -559,6 +580,7 @@ fn place_line(page: &mut Page, line: &Line, cross: f32, pitch: f32, cfg: &Layout
                 offset: g.offset,
                 len: g.len,
                 run: g.run,
+                gloss: g.gloss,
             });
         }
         if let Some(r) = &unit.ruby {
@@ -577,6 +599,7 @@ fn place_line(page: &mut Page, line: &Line, cross: f32, pitch: f32, cfg: &Layout
                 run: r.run,
                 offset: unit.glyphs.first().map_or(0, |g| g.offset),
                 generated: r.generated,
+                gloss: false,
             });
         }
     }

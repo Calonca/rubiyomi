@@ -219,6 +219,13 @@ impl Grader for AnkiGrader {
             .collect()
     }
 
+    fn readable_kanji(&self) -> crate::gloss::Readable {
+        let index = self.index.lock().unwrap_or_else(|e| e.into_inner());
+        let states = self.states.lock().unwrap_or_else(|e| e.into_inner());
+        let studied = index.iter().filter(|(_, n)| states.get(n).is_some_and(|s| crate::gloss::studied(*s)));
+        crate::gloss::readable_of(studied.map(|(word, _)| word.as_str()))
+    }
+
     fn grade(&self, word: &Word, value: u8, _sentence: &str) -> Result<CardState, GradeError> {
         self.check()?;
         let note =

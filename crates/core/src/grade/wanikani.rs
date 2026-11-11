@@ -37,6 +37,9 @@ struct Store {
     // By subject id.
     assignments: HashMap<u64, Assignment>,
     assignments_updated: Option<String>,
+    // Kanji items are synced too since this was added; a store from before reads them all once.
+    #[serde(default)]
+    with_kanji: bool,
     // "spelling|reading" to subject ids; kana vocabulary as "spelling|*".
     #[serde(skip)]
     index: HashMap<String, Vec<u64>>,
@@ -45,7 +48,7 @@ struct Store {
 impl Store {
     fn reindex(&mut self) {
         self.index.clear();
-        for s in self.subjects.values().filter(|s| !s.hidden) {
+        for s in self.subjects.values().filter(|s| !s.hidden && !s.kanji) {
             // Suffixes are written 〜人; the reader finds 人.
             let spelling = s.characters.trim_start_matches(['〜', '~']);
             let keys: Vec<String> =
@@ -173,7 +176,10 @@ impl Grader for WaniKaniGrader {
     // The items change rarely, so after the first sync only the changed ones are
     // asked for; the assignments are read whole, as a reset can take some away.
     fn sync(&self, progress: &dyn Fn(usize, usize)) -> Result<(), GradeError> {
-        let after = self.store().subjects_updated.clone();
+        let after = {
+            let store = self.store();
+            store.subjects_updated.clone().filter(|_| store.with_kanji)
+        };
         let subjects = self.client.subjects(after.as_deref(), progress)?;
         let assignments = self.client.assignments(None, progress)?;
         let mut store = self.store();
@@ -183,6 +189,7 @@ impl Grader for WaniKaniGrader {
         if subjects.updated_at.is_some() {
             store.subjects_updated = subjects.updated_at;
         }
+        store.with_kanji = true;
         store.assignments = assignments.items.into_iter().map(|a| (a.subject_id, a)).collect();
         store.assignments_updated = assignments.updated_at.or(store.assignments_updated.take());
         store.reindex();
@@ -193,6 +200,13 @@ impl Grader for WaniKaniGrader {
     fn states(&self, words: &[Word]) -> StateMap {
         let (store, now) = (self.store(), now());
         words.iter().filter_map(|w| Some((w.key(), store.matches(w).into_iter().find_map(|id| store.state(id, now))?))).collect()
+    }
+
+    // Kanji and vocabulary whose lessons are done.
+    fn readable_kanji(&self) -> crate::gloss::Readable {
+        let store = self.store();
+        let started = store.subjects.values().filter(|s| store.assignments.get(&s.id).is_some_and(|a| a.started_at.is_some() && !a.hidden));
+        crate::gloss::readable_of(started.map(|s| s.characters.as_str()))
     }
 
     fn refresh(&self, _words: &[Word]) -> Result<(), GradeError> {
@@ -283,6 +297,10 @@ mod tests {
                     vocab(5, "五", &["ご"]),
                     vocab(6, "〜人", &["にん"]),
                     vocab(7, "六", &["ろく"]),
+                    json!({ "id": 8, "object": "kanji",
+                        "data": { "characters": "門", "readings": [{ "reading": "もん", "accepted_answer": true }], "hidden_at": null, "document_url": "" } }),
+                    json!({ "id": 9, "object": "kanji",
+                        "data": { "characters": "雨", "readings": [{ "reading": "う", "accepted_answer": true }], "hidden_at": null, "document_url": "" } }),
                 ])
             } else if r.url.ends_with("/reviews") {
                 json!({ "resources_updated": { "assignment": assignment(11, 1, 5, true, true, Some(86400)) } }).to_string()
@@ -293,6 +311,8 @@ mod tests {
                     assignment(13, 3, 2, true, true, Some(3 * 3600)),
                     assignment(14, 4, 9, true, true, None),
                     assignment(16, 6, 6, true, true, Some(86400)),
+                    assignment(18, 8, 1, true, true, Some(86400)),
+                    assignment(19, 9, 0, true, false, None),
                 ])
             };
             Ok(Response::ok(body))
@@ -324,6 +344,18 @@ mod tests {
         assert_eq!(reasons[2], Err("Next review in 3 h".into()));
         assert_eq!(reasons[3], Err("Burned".into()));
         assert_eq!(reasons[5], Err("Locked".into()));
+    }
+
+    #[test]
+    fn kanji_read_are_those_taught_and_those_of_words_begun() {
+        let grader = WaniKaniGrader::new(WaniKaniClient::with_transport("t", server()), &tempdir("wk-kanji"));
+        grader.sync(&|_, _| {}).unwrap();
+        let mut got: Vec<char> = grader.readable_kanji().into_iter().collect();
+        got.sort();
+        let mut want: Vec<char> = "一三四人門".chars().collect();
+        want.sort();
+        assert_eq!(got, want, "二 has no lesson done, 六 no assignment, 雨 no lesson");
+        assert!(grader.states(&[word("門", "もん")]).is_empty(), "a kanji item is no word to colour");
     }
 
     #[test]

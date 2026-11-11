@@ -253,6 +253,22 @@ impl Jmdict {
         .unwrap_or_default()
     }
 
+    pub fn entry(&self, id: u32) -> Option<Entry> {
+        let split = |s: String, sep: char| s.split(sep).filter(|x| !x.is_empty()).map(str::to_owned).collect::<Vec<_>>();
+        self.conn
+            .query_row("SELECT id, kanji, kana, pos, gloss, common FROM entry WHERE id = ?1", [id], |r| {
+                Ok(Entry {
+                    id: r.get(0)?,
+                    kanji: split(r.get(1)?, '|'),
+                    kana: split(r.get(2)?, '|'),
+                    pos: split(r.get(3)?, ','),
+                    senses: split(r.get(4)?, '\n'),
+                    common: r.get(5)?,
+                })
+            })
+            .ok()
+    }
+
     pub fn lookup(&self, spelling: &str, reading: Option<&str>) -> Option<Entry> {
         self.lookup_as(spelling, reading, &[])
     }
@@ -310,6 +326,7 @@ mod tests {
         assert_eq!(d.lookup("行く", None).unwrap().id, 301, "the common one first");
         assert_eq!(d.lookup("行く", Some("ゆく")).unwrap().id, 300, "the reading decides");
         assert!(d.lookup("犬", None).is_none());
+        assert_eq!(d.entry(200), Some(wait), "an entry by its id");
         assert_eq!(d.lookup_as("待つ", None, &["n"]).unwrap().id, 200, "nothing fits: the best there is");
         assert!(build(&b"{\"words\": [ {\"id\": "[..], &path, |_| {}).is_err());
     }

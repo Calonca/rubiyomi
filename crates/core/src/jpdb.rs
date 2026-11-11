@@ -221,6 +221,7 @@ impl JpdbClient {
                                 .unwrap_or_default(),
                             jmdict_id: v.first()?.as_u64().and_then(|id| u32::try_from(id).ok()),
                             ruby: furigana(t.get(3)),
+                            name: false,
                         })
                     })
                     .collect();

@@ -36,13 +36,15 @@ impl std::fmt::Display for WaniKaniError {
     }
 }
 
-// A vocabulary or kana vocabulary item; kana vocabulary has no readings.
+// A vocabulary, kana vocabulary or kanji item; kana vocabulary has no readings.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Subject {
     pub id: u64,
     pub characters: String,
     pub readings: Vec<String>,
     pub kana: bool,
+    #[serde(default)]
+    pub kanji: bool,
     pub url: String,
     pub hidden: bool,
 }
@@ -164,7 +166,7 @@ impl WaniKaniClient {
     }
 
     pub fn subjects(&self, updated_after: Option<&str>, progress: &dyn Fn(usize, usize)) -> Result<Collection<Subject>, WaniKaniError> {
-        let mut url = format!("{BASE}subjects?types=vocabulary,kana_vocabulary");
+        let mut url = format!("{BASE}subjects?types=kanji,vocabulary,kana_vocabulary");
         if let Some(t) = updated_after {
             url.push_str(&format!("&updated_after={t}"));
         }
@@ -176,7 +178,7 @@ impl WaniKaniClient {
         updated_after: Option<&str>,
         progress: &dyn Fn(usize, usize),
     ) -> Result<Collection<Assignment>, WaniKaniError> {
-        let mut url = format!("{BASE}assignments?subject_types=vocabulary,kana_vocabulary");
+        let mut url = format!("{BASE}assignments?subject_types=kanji,vocabulary,kana_vocabulary");
         if let Some(t) = updated_after {
             url.push_str(&format!("&updated_after={t}"));
         }
@@ -203,9 +205,10 @@ fn time(v: Option<&Value>) -> Option<i64> {
 }
 
 fn subject(r: &Value) -> Option<Subject> {
-    let kana = match r.get("object")?.as_str()? {
-        "vocabulary" => false,
-        "kana_vocabulary" => true,
+    let (kana, kanji) = match r.get("object")?.as_str()? {
+        "vocabulary" => (false, false),
+        "kana_vocabulary" => (true, false),
+        "kanji" => (false, true),
         _ => return None,
     };
     let d = r.get("data")?;
@@ -222,6 +225,7 @@ fn subject(r: &Value) -> Option<Subject> {
         characters: d.get("characters")?.as_str()?.to_owned(),
         readings,
         kana,
+        kanji,
         url: d.get("document_url").and_then(Value::as_str).unwrap_or_default().to_owned(),
         hidden: d.get("hidden_at").is_some_and(|h| !h.is_null()),
     })
@@ -275,7 +279,7 @@ mod tests {
         assert_eq!(got.updated_at.as_deref(), Some("2026-10-01T10:00:00.000000Z"));
         assert_eq!(*seen.lock().unwrap(), [(1, 2), (2, 2)]);
         let requests = mock.requests();
-        assert!(requests[0].url.ends_with("subjects?types=vocabulary,kana_vocabulary"));
+        assert!(requests[0].url.ends_with("subjects?types=kanji,vocabulary,kana_vocabulary"));
         assert!(requests.iter().all(|r| r.body.is_empty()
             && r.headers.contains(&("Authorization".into(), "Bearer t".into()))
             && r.headers.contains(&("Wanikani-Revision".into(), "20170710".into()))));

@@ -70,6 +70,12 @@ pub trait Grader: Send + Sync {
     // Answers from what is known on the device, without asking anyone.
     fn states(&self, words: &[Word]) -> StateMap;
 
+    // The kanji of every word on the device the reader has studied, and of the kanji the
+    // service has taught: what reads without the English (see `gloss`).
+    fn readable_kanji(&self) -> crate::gloss::Readable {
+        crate::gloss::Readable::new()
+    }
+
     // Asks for fresh states of these words, for the next `states`.
     fn refresh(&self, words: &[Word]) -> Result<(), GradeError> {
         let _ = words;

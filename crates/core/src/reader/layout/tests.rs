@@ -78,3 +78,21 @@ fn an_overhanging_reading_leaves_its_word_alone() {
     assert_eq!(reading.x + reading.w / 2.0, 20.0);
     assert!(reading.w > 40.0);
 }
+
+#[test]
+fn a_swapped_stem_is_one_glyph_and_its_ending_stays() {
+    // 芥川龍之介「羅生門」, public domain, from Aozora Bunko: 下人は待っていた.
+    let text = "下人は待っていた";
+    let runs = crate::reader::runs::with_swaps(&[Run { start: 0, len: 8, ..Run::default() }], &[(3, 1, "wait".into())]);
+    for vertical in [false, true] {
+        let cfg = LayoutConfig { vertical, width: 400.0, height: 400.0, font_size: 20.0, ..LayoutConfig::default() };
+        let page = &layout(&[LayoutBlock::Text { block: 0, start: 10, text, runs: &runs, heading: false }], &cfg, &FixedMeasure)[0];
+        let shown: Vec<(&str, usize, usize, bool)> = page.glyphs.iter().map(|g| (g.text.as_str(), g.offset, g.len, g.gloss)).collect();
+        assert_eq!(&shown[2..5], [("は", 12, 1, false), ("wait", 13, 1, true), ("っ", 14, 1, false)], "vertical {vertical}");
+        let english = &page.glyphs[3];
+        assert_eq!(english.form, if vertical { Form::Rotated } else { Form::Upright });
+        let along = if vertical { english.rect.h } else { english.rect.w };
+        assert!(along > FixedMeasure.advance("wait", 20.0 * GLOSS_SCALE), "{along}");
+        assert_eq!((page.start, page.end), (10, 18));
+    }
+}

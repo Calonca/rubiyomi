@@ -157,6 +157,17 @@ pub enum Furigana {
     Dictionary,
 }
 
+// English for the words with a kanji not read yet: none, small over the word where furigana go,
+// or in place of the word's stem.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum English {
+    #[default]
+    Off,
+    Above,
+    InPlace,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WordColours {
@@ -214,6 +225,7 @@ pub struct PageSettings {
     pub max_chars_per_line: u32,
     pub typeface: Typeface,
     pub furigana: Furigana,
+    pub english: English,
     pub colours: WordColours,
     pub palette: WordPalette,
     pub custom_colours: CustomColours,
@@ -235,6 +247,7 @@ impl Default for PageSettings {
             max_chars_per_line: 0,
             typeface: Typeface::Sans,
             furigana: Furigana::Dictionary,
+            english: English::Off,
             colours: WordColours::Text,
             palette: WordPalette::Full,
             custom_colours: CustomColours::new(),
