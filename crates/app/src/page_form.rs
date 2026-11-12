@@ -114,7 +114,7 @@ pub fn form(
             ui::hint(if no_source {
                 "Needs a reviews service, which tells the kanji you can read: choose one in Settings → Reviews."
             } else {
-                "Words with a kanji you haven't studied show their English. Tap one for the Japanese."
+                "Words with a kanji you haven't studied show their English: in place, a tap opens the card; above, a tap shows the reading first."
             })
             .into_element()
         }))

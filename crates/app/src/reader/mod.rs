@@ -345,9 +345,10 @@ impl ReaderState {
         self.words.revealed.with(|r| colours.glosses.iter().filter(|g| !r.contains(&g.start)).cloned().collect())
     }
 
-    // A tap on a word shown in English shows it in Japanese, before any look-up.
+    // A tap on a word with its English over it shows its reading, before any look-up. In place
+    // the word would take another length and move the line, so the tap opens its card at once.
     fn reveal(&self, offset: usize) -> bool {
-        if self.shared.page.with_untracked(|p| p.english) == English::Off {
+        if self.shared.page.with_untracked(|p| p.english) != English::Above {
             return false;
         }
         let index = self.index.get_untracked();
