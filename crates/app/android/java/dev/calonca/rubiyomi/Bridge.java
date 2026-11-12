@@ -10,10 +10,12 @@ import android.app.FragmentManager;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.LocaleList;
 import android.util.DisplayMetrics;
 import android.view.DisplayCutout;
 import android.view.View;
@@ -22,6 +24,7 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
 // What Rust calls on Android. NSH's activity is final and passes nothing to Rust, so this
@@ -44,10 +47,42 @@ public final class Bridge extends Application implements Application.ActivityLif
     @Override
     public void onCreate() {
         super.onCreate();
+        preferJapaneseGlyphs();
         secrets = new Secrets(this);
         anki = new AnkiDroidBridge(this);
         app = this;
         registerActivityLifecycleCallbacks(this);
+    }
+
+    // Android resets the default locales when the system's change.
+    @Override
+    public void onConfigurationChanged(Configuration config) {
+        super.onConfigurationChanged(config);
+        preferJapaneseGlyphs();
+    }
+
+    // Text takes its fallback fonts in the order of the default locales, and with none of them
+    // Japanese a kanji is drawn in its Chinese shape. NSH sets no locale on its text, so Japanese
+    // goes in the process's list: after the user's own, to decide nothing but those fonts, and
+    // ahead of any Chinese one, as the books are Japanese. The system's locales and the app's
+    // language stay as they are.
+    private static void preferJapaneseGlyphs() {
+        LocaleList have = LocaleList.getDefault();
+        int at = have.size();
+        for (int i = 0; i < have.size(); i++) {
+            String language = have.get(i).getLanguage();
+            if (language.equals("ja")) {
+                return;
+            }
+            if (language.equals("zh") && at == have.size()) {
+                at = i;
+            }
+        }
+        Locale[] list = new Locale[have.size() + 1];
+        for (int i = 0, j = 0; i < list.length; i++) {
+            list[i] = i == at ? Locale.JAPANESE : have.get(j++);
+        }
+        LocaleList.setDefault(new LocaleList(list));
     }
 
     public static String secret(String name) {
@@ -199,6 +234,12 @@ public final class Bridge extends Application implements Application.ActivityLif
             boolean granted = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
             answer.set(granted ? GRANTED : REFUSED);
         }
+    }
+
+    @Override
+    public void onActivityPreCreated(Activity a, Bundle state) {
+        // Android sets the default locales again between the app's start and its activity's.
+        preferJapaneseGlyphs();
     }
 
     @Override
