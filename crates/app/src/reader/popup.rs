@@ -21,7 +21,7 @@ use rubiyomi_core::text::Block;
 use rubiyomi_core::theme::{Color, Scheme};
 
 use super::ReaderState;
-use super::words::{Colours, StateColours, full_colour};
+use super::words::{StateColours, full_colour};
 use crate::ui::{Ripples, c, fill_parent, glyph, icon, snackbar};
 
 // Below this width the card spans the screen: narrower, it looks like a tooltip.
@@ -549,9 +549,8 @@ impl ReaderState {
         let said = match result {
             Ok(card) => {
                 if let Some(old) = self.words.colours.get_untracked() {
-                    let mut states = old.states.clone();
-                    states.insert(key.clone(), card);
-                    self.words.colours.set(Some(Rc::new(Colours::new(old.index, old.tag.clone(), old.words.clone(), states))));
+                    let chapter = self.chapter.get_untracked();
+                    self.words.colours.set(Some(Rc::new(old.graded(&word, card, &chapter))));
                 }
                 self.edit_popup(|p| {
                     if matches!(&p.content, Content::Word(w) if w.key() == key) {

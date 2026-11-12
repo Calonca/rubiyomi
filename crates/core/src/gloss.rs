@@ -137,6 +137,15 @@ pub fn glosses(words: &[Word], chars: &[char], readable: &Readable, meanings: im
     out
 }
 
+// The glosses still wanted once more kanji are readable, as after a grade.
+pub fn still_unread(glosses: &[Gloss], chars: &[char], readable: &Readable) -> Vec<Gloss> {
+    glosses
+        .iter()
+        .filter(|g| chars.get(g.start..g.start + g.len).is_some_and(|w| w.iter().any(|c| is_real_kanji(*c) && !readable.contains(c))))
+        .cloned()
+        .collect()
+}
+
 // The English of the page's words over their stems, where furigana go.
 pub fn above(page: &Page, glosses: &[Gloss], cfg: &LayoutConfig, measure: &dyn Measure) -> Vec<PlacedRuby> {
     let at = crate::furigana::glyphs_by_offset(page);

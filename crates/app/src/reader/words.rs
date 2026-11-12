@@ -10,7 +10,7 @@ use std::sync::Arc;
 use nsh_core::prelude::*;
 use rubiyomi_core::cards::CardState;
 use rubiyomi_core::finder::{Finder, Word, jpdb_words_tag, words_tag};
-use rubiyomi_core::gloss::{Gloss, add_kanji, chapter_chars, glosses, studied};
+use rubiyomi_core::gloss::{Gloss, Readable, add_kanji, chapter_chars, glosses, still_unread, studied};
 use rubiyomi_core::grade::{Grader, StateMap};
 use rubiyomi_core::jpdb::JpdbClient;
 use rubiyomi_core::settings::{CustomColours, PageSettings, WordColours, WordPalette};
@@ -108,6 +108,8 @@ pub struct Colours {
     pub states: StateMap,
     // The words with a kanji not read yet, with their English, when it is wanted.
     pub glosses: Arc<Vec<Gloss>>,
+    // The kanji read when they were found.
+    readable: Arc<Readable>,
     // The card state of each char of the chapter: `ink` runs for every char of every redraw,
     // so it reads this instead of finding the word and hashing its key.
     state_at: Vec<Option<CardState>>,
@@ -123,12 +125,30 @@ impl Colours {
                 chars.fill(Some(*state));
             }
         }
-        Colours { index, tag, words, states, glosses: Arc::default(), state_at }
+        Colours { index, tag, words, states, glosses: Arc::default(), readable: Arc::default(), state_at }
     }
 
-    pub fn with_glosses(mut self, glosses: Vec<Gloss>) -> Self {
+    pub fn with_glosses(mut self, (readable, glosses): (Readable, Vec<Gloss>)) -> Self {
         self.glosses = Arc::new(glosses);
+        self.readable = Arc::new(readable);
         self
+    }
+
+    // After `word` was graded to `card`: its colour changes, and the English stays on every word
+    // still not read, which the word's kanji may have made readable. `chapter` is the one shown.
+    pub fn graded(&self, word: &Word, card: CardState, chapter: &Chapter) -> Colours {
+        let mut states = self.states.clone();
+        states.insert(word.key(), card);
+        let mut out = Colours::new(self.index, self.tag.clone(), self.words.clone(), states);
+        let mut readable = (*self.readable).clone();
+        if studied(card) && !self.glosses.is_empty() {
+            add_kanji(&mut readable, &word.spelling);
+            out.glosses = Arc::new(still_unread(&self.glosses, &chapter_chars(chapter), &readable));
+        } else {
+            out.glosses = self.glosses.clone();
+        }
+        out.readable = Arc::new(readable);
+        out
     }
 
     pub fn gloss_at(&self, offset: usize) -> Option<&Gloss> {
@@ -144,18 +164,25 @@ impl Colours {
 
 // The words of a chapter to show in English: those with a kanji found in no word studied, by the
 // reviews service or in this chapter.
-fn english(chapter: &Chapter, words: &[Word], states: &StateMap, grader: Option<&dyn Grader>, finder: Option<&Finder>) -> Vec<Gloss> {
+fn english(
+    chapter: &Chapter,
+    words: &[Word],
+    states: &StateMap,
+    grader: Option<&dyn Grader>,
+    finder: Option<&Finder>,
+) -> (Readable, Vec<Gloss>) {
     let mut readable = grader.map(|g| g.readable_kanji()).unwrap_or_default();
     for w in words.iter().filter(|w| states.get(&w.key()).is_some_and(|s| studied(*s))) {
         add_kanji(&mut readable, &w.spelling);
     }
     if readable.is_empty() {
         // Nothing studied, or no service to tell: everything would be English.
-        return Vec::new();
+        return (readable, Vec::new());
     }
-    glosses(words, &chapter_chars(chapter), &readable, |w| {
+    let found = glosses(words, &chapter_chars(chapter), &readable, |w| {
         w.jmdict_id.and_then(|id| finder?.entry(id)).map(|e| e.senses).unwrap_or_default()
-    })
+    });
+    (readable, found)
 }
 
 // A chapter's words, from jpdb.io when it parses, else from the finder on the device; and
@@ -301,8 +328,11 @@ impl ReaderState {
                     .as_ref()
                     .map(|g| g.states(&words))
                     .unwrap_or_else(|| crate::hooks::fake_states(words.iter().map(Word::key), 7).unwrap_or_default());
-                let glosses =
-                    if for_english { english(&whole, &words, &states, grader_then.as_deref(), finder_then.as_deref()) } else { Vec::new() };
+                let glosses = if for_english {
+                    english(&whole, &words, &states, grader_then.as_deref(), finder_then.as_deref())
+                } else {
+                    Default::default()
+                };
                 (Colours::new(index, saving, words, states).with_glosses(glosses), failed)
             })
             .await;
@@ -384,6 +414,8 @@ impl ReaderState {
 
 #[cfg(test)]
 mod tests {
+    use rubiyomi_core::text::{Block, TextBlock};
+
     use super::*;
 
     // 吾輩は猫である, 夏目漱石, Aozora Bunko 789.
@@ -391,6 +423,28 @@ mod tests {
 
     fn word(spelling: &str, start: usize, len: usize) -> Word {
         Word { spelling: spelling.into(), start, len, ..Word::default() }
+    }
+
+    // 「下人の行方は、誰も知らない。」芥川龍之介「羅生門」, Aozora Bunko 127.
+    #[test]
+    fn a_grade_keeps_the_english_of_the_words_still_not_read() {
+        let chapter = Chapter { title: String::new(), blocks: vec![Block::Text(TextBlock::plain("下人の行方は誰も知らない"))] };
+        let w = |spelling: &str, start: usize, len: usize| Word { jmdict_id: Some(1), ..word(spelling, start, len) };
+        let words = vec![w("下人", 0, 2), w("行方", 3, 2), w("誰", 6, 1), w("知る", 8, 4)];
+        let readable = rubiyomi_core::gloss::readable_of(["下人"]);
+        let found = glosses(&words, &chapter_chars(&chapter), &readable, |_| vec!["meaning".into()]);
+        let colours = Colours::new(0, None, Arc::new(words.clone()), StateMap::new()).with_glosses((readable, found));
+        let starts = |c: &Colours| c.glosses.iter().map(|g| g.start).collect::<Vec<_>>();
+        assert_eq!(starts(&colours), [3, 6, 8]);
+
+        let new = colours.graded(&words[1], CardState::New, &chapter);
+        assert_eq!(starts(&new), [3, 6, 8], "a grade that teaches no kanji changes no English");
+        assert_eq!(new.states.get(&words[1].key()), Some(&CardState::New));
+
+        let known = new.graded(&words[2], CardState::Known, &chapter);
+        assert_eq!(starts(&known), [3, 8], "only the word read now goes back to Japanese");
+        let again = known.graded(&words[0], CardState::Due, &chapter);
+        assert_eq!(starts(&again), [3, 8]);
     }
 
     #[test]
