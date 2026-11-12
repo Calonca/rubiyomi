@@ -608,7 +608,6 @@ fn page_row(state: &ReaderState, laid: &Rc<Laid>, at: usize) -> AnyElement {
         family: family(typeface),
         ink: c(s.on_surface),
         ruby: rgba((s.on_surface.to_rgb() << 8) | 0xcc),
-        gloss: c(s.tertiary),
         vertical,
         width: laid.cfg.width,
         height: laid.cfg.height,

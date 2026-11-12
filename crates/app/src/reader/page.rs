@@ -133,8 +133,6 @@ pub struct PageStyle {
     pub family: &'static str,
     pub ink: Rgba,
     pub ruby: Rgba,
-    // Of a word's English.
-    pub gloss: Rgba,
     pub vertical: bool,
     pub width: f32,
     pub height: f32,
@@ -239,9 +237,9 @@ fn row_content(line: Line, style: &PageStyle, ink: InkOf) -> Text {
     runs.into_iter().fold(row_text(String::new(), line.size, style.family, style.ink), |out, (run, ink)| out.child(span(run, ink)))
 }
 
-// A word's English: not the book's text, so it is set smaller, slanted and in a colour of its own.
-fn english(out: Text, size: f32, style: &PageStyle) -> Text {
-    out.text_size(px(size * GLOSS_SCALE)).italic().text_color(style.gloss)
+// A word's English: not the book's text, so it is set smaller and slanted, in its word's colour.
+fn english(out: Text, size: f32, ink: Ink, style: &PageStyle) -> Text {
+    out.text_size(px(size * GLOSS_SCALE)).italic().text_color(ink.colour.map_or(style.ink, c))
 }
 
 fn row(line: Line, follows: bool, style: &PageStyle, ink: InkOf, on_tap: &PageTap) -> AnyElement {
@@ -250,8 +248,12 @@ fn row(line: Line, follows: bool, style: &PageStyle, ink: InkOf, on_tap: &PageTa
     let content = if line.gloss {
         // Centred on its place, which has air on either side.
         at.x -= line.size / 2.0;
-        let size = line.size;
-        english(row_text(line.text, size, style.family, style.ink), size, style).text_center()
+        let (size, ink) = (line.size, ink(line.block, line.offset));
+        let out = english(row_text(line.text, size, style.family, style.ink), size, ink, style).text_center();
+        match ink.line {
+            Some(line) => out.underline().text_decoration_color(c(line)),
+            None => out,
+        }
     } else {
         row_content(line, style, ink)
     };
@@ -283,7 +285,7 @@ fn glyph(line: Line, follows: bool, style: &PageStyle, ink: InkOf, on_tap: &Page
         .number_of_lines(1)
         .allow_font_scaling(false)
         .text_center();
-    let out = if line.gloss { english(out, size, style) } else { out };
+    let out = if line.gloss { english(out, size, ink, style) } else { out };
     let out = tappable(out, at, on_tap).absolute().left(px(at.x)).top(px(at.y)).w(px(at.w)).h(px(at.h)).continues_text(follows);
     if at.rotated { out.rotate(radians(FRAC_PI_2)).into_element() } else { out.into_element() }
 }
@@ -307,7 +309,7 @@ fn reading(ruby: &PlacedRuby, style: &PageStyle, ink: InkOf) -> AnyElement {
     let r = ruby.rect;
     let color = ink(ruby.block, ruby.offset).colour.map_or(style.ruby, c);
     if ruby.gloss {
-        return english_reading(ruby, style);
+        return english_reading(ruby, style, color);
     }
     if style.vertical {
         let column = ruby.text.chars().map(|ch| {
@@ -329,9 +331,9 @@ fn reading(ruby: &PlacedRuby, style: &PageStyle, ink: InkOf) -> AnyElement {
 }
 
 // A word's English over it, along the line: in a column, turned to run down it.
-fn english_reading(ruby: &PlacedRuby, style: &PageStyle) -> AnyElement {
+fn english_reading(ruby: &PlacedRuby, style: &PageStyle, color: Rgba) -> AnyElement {
     let r = ruby.rect;
-    let out = row_text(ruby.text.clone(), ruby.size, style.family, style.gloss).italic().text_center().select_none().absolute();
+    let out = row_text(ruby.text.clone(), ruby.size, style.family, color).italic().text_center().select_none().absolute();
     if !style.vertical {
         let room = ruby.size * 2.0;
         return out.left(px(r.x - room)).top(px(r.y - ruby.size * LEADING)).w(px(r.w + 2.0 * room)).into_element();
