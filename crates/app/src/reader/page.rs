@@ -7,7 +7,7 @@ use std::f32::consts::FRAC_PI_2;
 use std::rc::Rc;
 
 use nsh_core::prelude::*;
-use rubiyomi_core::reader::layout::{Form, Measure, Page, PlacedGlyph, PlacedRuby, Rect};
+use rubiyomi_core::reader::layout::{Form, GLOSS_SCALE, Measure, Page, PlacedGlyph, PlacedRuby, Rect};
 use rubiyomi_core::theme::Color;
 
 use super::words::{Ink, spans};
@@ -25,6 +25,8 @@ pub struct Line {
     pub form: Form,
     // What core's justification adds between characters.
     pub spacing: f32,
+    // A word's English, standing for `len` chars.
+    pub gloss: bool,
 }
 
 fn starting(g: &PlacedGlyph) -> Line {
@@ -38,6 +40,7 @@ fn starting(g: &PlacedGlyph) -> Line {
         joins_next: false,
         form: g.form,
         spacing: 0.0,
+        gloss: g.gloss,
     }
 }
 
@@ -59,7 +62,8 @@ pub fn lines(page: &Page) -> Vec<Line> {
     };
     for g in &page.glyphs {
         match lines.last_mut() {
-            Some(line) if line.block == g.block && line.rect.y == g.rect.y => {
+            // A word's English is set apart, in its own style.
+            Some(line) if line.block == g.block && line.rect.y == g.rect.y && !line.gloss && !g.gloss => {
                 line.text.push_str(&g.text);
                 line.rect.w = g.rect.right() - line.rect.x;
                 line.len = g.offset + g.len - line.offset;
@@ -129,6 +133,8 @@ pub struct PageStyle {
     pub family: &'static str,
     pub ink: Rgba,
     pub ruby: Rgba,
+    // Of a word's English.
+    pub gloss: Rgba,
     pub vertical: bool,
     pub width: f32,
     pub height: f32,
@@ -233,10 +239,23 @@ fn row_content(line: Line, style: &PageStyle, ink: InkOf) -> Text {
     runs.into_iter().fold(row_text(String::new(), line.size, style.family, style.ink), |out, (run, ink)| out.child(span(run, ink)))
 }
 
+// A word's English: not the book's text, so it is set smaller, slanted and in a colour of its own.
+fn english(out: Text, size: f32, style: &PageStyle) -> Text {
+    out.text_size(px(size * GLOSS_SCALE)).italic().text_color(style.gloss)
+}
+
 fn row(line: Line, follows: bool, style: &PageStyle, ink: InkOf, on_tap: &PageTap) -> AnyElement {
-    let at = LineBox::row(&line);
+    let mut at = LineBox::row(&line);
     let spacing = line.spacing;
-    tappable(row_content(line, style, ink), at, on_tap)
+    let content = if line.gloss {
+        // Centred on its place, which has air on either side.
+        at.x -= line.size / 2.0;
+        let size = line.size;
+        english(row_text(line.text, size, style.family, style.ink), size, style).text_center()
+    } else {
+        row_content(line, style, ink)
+    };
+    tappable(content, at, on_tap)
         .absolute()
         .left(px(at.x))
         .top(px(at.y))
@@ -264,6 +283,7 @@ fn glyph(line: Line, follows: bool, style: &PageStyle, ink: InkOf, on_tap: &Page
         .number_of_lines(1)
         .allow_font_scaling(false)
         .text_center();
+    let out = if line.gloss { english(out, size, style) } else { out };
     let out = tappable(out, at, on_tap).absolute().left(px(at.x)).top(px(at.y)).w(px(at.w)).h(px(at.h)).continues_text(follows);
     if at.rotated { out.rotate(radians(FRAC_PI_2)).into_element() } else { out.into_element() }
 }
@@ -286,6 +306,9 @@ fn column_line(rect: Rect, size: f32, colour: Color) -> AnyElement {
 fn reading(ruby: &PlacedRuby, style: &PageStyle, ink: InkOf) -> AnyElement {
     let r = ruby.rect;
     let color = ink(ruby.block, ruby.offset).colour.map_or(style.ruby, c);
+    if ruby.gloss {
+        return english_reading(ruby, style);
+    }
     if style.vertical {
         let column = ruby.text.chars().map(|ch| {
             row_text(ch.to_string(), ruby.size, style.family, color).text_center().w_full().h(px(ruby.size)).line_height(px(ruby.size))
@@ -303,6 +326,20 @@ fn reading(ruby: &PlacedRuby, style: &PageStyle, ink: InkOf) -> AnyElement {
         .top(px(r.y - ruby.size * LEADING))
         .w(px(r.w + 2.0 * room))
         .into_element()
+}
+
+// A word's English over it, along the line: in a column, turned to run down it.
+fn english_reading(ruby: &PlacedRuby, style: &PageStyle) -> AnyElement {
+    let r = ruby.rect;
+    let out = row_text(ruby.text.clone(), ruby.size, style.family, style.gloss).italic().text_center().select_none().absolute();
+    if !style.vertical {
+        let room = ruby.size * 2.0;
+        return out.left(px(r.x - room)).top(px(r.y - ruby.size * LEADING)).w(px(r.w + 2.0 * room)).into_element();
+    }
+    // Laid flat about the middle of its place, then turned; a little longer, so it isn't cut.
+    let (w, h) = (r.h + ruby.size, ruby.size * (1.0 + 2.0 * LEADING));
+    let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    out.left(px(cx - w / 2.0)).top(px(cy - h / 2.0)).w(px(w)).rotate(radians(FRAC_PI_2)).into_element()
 }
 
 // A tap on a line, in page coordinates.
@@ -449,7 +486,7 @@ mod tests {
 
     fn line(form: Form) -> Line {
         let rect = Rect { x: 100.0, y: 200.0, w: 20.0, h: 60.0 };
-        Line { text: "猫".to_owned(), rect, size: 20.0, block: 0, offset: 0, len: 1, joins_next: false, form, spacing: 0.0 }
+        Line { text: "猫".to_owned(), rect, size: 20.0, block: 0, offset: 0, len: 1, joins_next: false, form, spacing: 0.0, gloss: false }
     }
 
     #[test]
@@ -471,6 +508,7 @@ mod tests {
                 joins_next: false,
                 form,
                 spacing: 0.0,
+                gloss: false,
             };
             let at = LineBox::glyph(&line, 0.0, 0.0);
             assert!(at.w > line.rect.w, "{form:?}");

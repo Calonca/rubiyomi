@@ -16,11 +16,13 @@ use nsh_core::platform::Lifecycle;
 use nsh_core::prelude::*;
 #[cfg(not(target_os = "android"))]
 use nsh_core::{TouchEvent, TouchPhase};
+use rubiyomi_core::finder::Word;
+use rubiyomi_core::gloss::Gloss;
 use rubiyomi_core::library::{BookId, BookMeta, Progress, fsutil::now};
 use rubiyomi_core::platform::Platform;
-use rubiyomi_core::reader::layout::{FixedMeasure, LayoutBlock, LayoutConfig, Page, layout, page_for_offset};
-use rubiyomi_core::reader::runs::{Run, book_runs};
-use rubiyomi_core::settings::{Furigana, PageSettings, Typeface};
+use rubiyomi_core::reader::layout::{FixedMeasure, LayoutBlock, LayoutConfig, Page, PlacedRuby, layout, page_for_offset};
+use rubiyomi_core::reader::runs::{Run, book_runs, with_swaps};
+use rubiyomi_core::settings::{English, Furigana, PageSettings, Typeface};
 use rubiyomi_core::text::{Block, Chapter, TextBlock};
 use rubiyomi_core::theme::Scheme;
 
@@ -65,17 +67,27 @@ fn config(width: f32, height: f32, p: &PageSettings) -> LayoutConfig {
         height: (height - p.margin - if p.show_position { p.margin.max(FOOTER) } else { p.margin }).max(40.0),
         font_size: p.font_size,
         line_height: p.line_height,
-        show_ruby: p.furigana != Furigana::Hide,
+        // English over words sits where furigana go.
+        show_ruby: p.furigana != Furigana::Hide || p.english == English::Above,
         ruby_scale: 0.5,
         max_chars_per_line: p.max_chars_per_line,
         heading_scale: 1.25,
     }
 }
 
-// Without the book's readings, the lines keep their room for the dictionary's.
-fn pages_of(chapter: &Chapter, cfg: &LayoutConfig, book_ruby: bool, measure: &NshMeasure) -> Vec<Page> {
+// Without the book's readings, the lines keep their room for the dictionary's. `swaps` are the
+// words shown in English in their place, in order.
+fn pages_of(chapter: &Chapter, cfg: &LayoutConfig, book_ruby: bool, swaps: &[Gloss], measure: &NshMeasure) -> Vec<Page> {
     let runs_of = |t: &TextBlock| if book_ruby { book_runs(t) } else { vec![Run { start: 0, len: t.char_len(), ..Run::default() }] };
-    let runs: Vec<Vec<Run>> = chapter.blocks.iter().map(|b| b.as_text().map(runs_of).unwrap_or_default()).collect();
+    let mut start = 0;
+    let mut runs: Vec<Vec<Run>> = Vec::with_capacity(chapter.blocks.len());
+    for b in &chapter.blocks {
+        let len = b.char_len();
+        let within = &swaps[swaps.partition_point(|g| g.start < start)..swaps.partition_point(|g| g.start < start + len)];
+        let here: Vec<(usize, usize, String)> = within.iter().map(|g| (g.start - start, g.stem, g.text.clone())).collect();
+        runs.push(b.as_text().map(|t| with_swaps(&runs_of(t), &here)).unwrap_or_default());
+        start += len;
+    }
     let mut start = 0;
     let mut blocks = Vec::with_capacity(chapter.blocks.len());
     for (i, b) in chapter.blocks.iter().enumerate() {
@@ -203,6 +215,8 @@ struct LaidFor {
     cfg: LayoutConfig,
     typeface: Typeface,
     book_ruby: bool,
+    // Which words are shown in English in place, told apart by a hash.
+    swaps: u64,
 }
 
 impl Laid {
@@ -316,9 +330,43 @@ impl ReaderState {
         }
     }
 
+    // The words shown in English and not tapped back: in place of their stems, when so set.
+    // Reading it subscribes to them.
+    fn swaps(&self) -> Vec<Gloss> {
+        if self.shared.page.with(|p| p.english) != English::InPlace {
+            return Vec::new();
+        }
+        self.english_shown()
+    }
+
+    fn english_shown(&self) -> Vec<Gloss> {
+        let index = self.index.get_untracked();
+        let Some(colours) = self.words.colours.get().filter(|c| c.index == index) else { return Vec::new() };
+        self.words.revealed.with(|r| colours.glosses.iter().filter(|g| !r.contains(&g.start)).cloned().collect())
+    }
+
+    // A tap on a word shown in English shows it in Japanese, before any look-up.
+    fn reveal(&self, offset: usize) -> bool {
+        if self.shared.page.with_untracked(|p| p.english) == English::Off {
+            return false;
+        }
+        let index = self.index.get_untracked();
+        let start = self
+            .words
+            .colours
+            .with_untracked(|c| c.as_ref().filter(|c| c.index == index).and_then(|c| c.gloss_at(offset)).map(|g| g.start));
+        let Some(start) = start.filter(|s| self.words.revealed.with_untracked(|r| !r.contains(s))) else { return false };
+        self.close_popup();
+        self.words.revealed.update(|r| {
+            r.insert(start);
+        });
+        true
+    }
+
     fn open_chapter(&self, index: usize, place: Place) {
         let Some(chapter) = self.shared.library.chapter(&self.meta.id, index) else { return };
         self.mark.set(None);
+        self.words.revealed.update(|r| r.clear());
         self.close_popup();
         self.place.set(place);
         self.opening.set(self.opening.get() + 1);
@@ -337,13 +385,22 @@ impl ReaderState {
         if width <= 0.0 {
             return;
         }
-        let made_for = LaidFor { chapter: index, opening: self.opening.get(), cfg, typeface, book_ruby };
+        let swaps = self.swaps();
+        let swaps_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for g in &swaps {
+                (g.start, g.stem, &g.text).hash(&mut h);
+            }
+            h.finish()
+        };
+        let made_for = LaidFor { chapter: index, opening: self.opening.get(), cfg, typeface, book_ruby, swaps: swaps_hash };
         if self.laid.with_untracked(|l| l.as_ref().is_some_and(|l| l.made_for == made_for)) {
             return;
         }
         let started = Instant::now();
         let measure = &measures[(typeface == Typeface::Serif) as usize];
-        let pages = pages_of(&chapter, &cfg, book_ruby, measure);
+        let pages = pages_of(&chapter, &cfg, book_ruby, &swaps, measure);
         log::info!("laid out chapter {index}: {} chars into {} pages in {:?}", chapter.char_len(), pages.len(), started.elapsed());
         // The word marked on the page shown, as after a look-up, stays in sight when the page is
         // laid out again, as on turning the phone; else the page's first line does.
@@ -551,6 +608,7 @@ fn page_row(state: &ReaderState, laid: &Rc<Laid>, at: usize) -> AnyElement {
         family: family(typeface),
         ink: c(s.on_surface),
         ruby: rgba((s.on_surface.to_rgb() << 8) | 0xcc),
+        gloss: c(s.tertiary),
         vertical,
         width: laid.cfg.width,
         height: laid.cfg.height,
@@ -566,16 +624,50 @@ fn page_row(state: &ReaderState, laid: &Rc<Laid>, at: usize) -> AnyElement {
     let page_ink = state.page_ink();
     let ink = move |_, offset| page_ink.at(offset);
     let page = &laid.pages[at];
+    let (dictionary, english) = state.shared.page.with(|p| (p.furigana == Furigana::Dictionary, p.english));
+    let index = state.index.get_untracked();
+    let words = state.words.colours.get().filter(|c| c.index == index);
     // Their extent only sizes what's drawn centred over the word, so any measure will do.
-    let mut readings = if state.shared.page.with(|p| p.furigana == Furigana::Dictionary) {
-        let index = state.index.get_untracked();
-        let words = state.words.colours.get().filter(|c| c.index == index);
-        words.map(|c| rubiyomi_core::furigana::on_page(page, &c.words, &laid.cfg, &FixedMeasure)).unwrap_or_default()
+    let mut readings = if dictionary {
+        words.as_ref().map(|c| rubiyomi_core::furigana::on_page(page, &c.words, &laid.cfg, &FixedMeasure)).unwrap_or_default()
     } else {
         page.ruby.clone()
     };
+    if english != English::Off
+        && let Some(c) = &words
+    {
+        readings_with_english(&mut readings, page, c, &state.english_shown(), english == English::Above, &laid.cfg);
+    }
     rubiyomi_core::furigana::fit(&mut readings, laid.cfg.vertical);
     page_view(page, &readings, &style, &ink, on_tap, file_of).left(px(margin)).top(px(margin)).into_element()
+}
+
+// Over a word shown in English, its English stands where its reading would, or, in place, no
+// reading at all; a word tapped back to Japanese gets its reading, if there's room for one.
+fn readings_with_english(
+    readings: &mut Vec<PlacedRuby>,
+    page: &Page,
+    colours: &words::Colours,
+    shown: &[Gloss],
+    above: bool,
+    cfg: &LayoutConfig,
+) {
+    let covered = |offset: usize| shown.iter().any(|g| (g.start..g.start + g.len).contains(&offset));
+    readings.retain(|r| !covered(r.offset));
+    if !cfg.show_ruby {
+        return;
+    }
+    let first = colours.glosses.partition_point(|g| g.start + g.len <= page.start);
+    let revealed: Vec<Word> = colours.glosses[first..]
+        .iter()
+        .take_while(|g| g.start < page.end)
+        .filter(|g| !covered(g.start) && !readings.iter().any(|r| (g.start..g.start + g.len).contains(&r.offset)))
+        .filter_map(|g| colours.word_at(g.start).cloned())
+        .collect();
+    readings.extend(rubiyomi_core::furigana::on_page(page, &revealed, cfg, &FixedMeasure));
+    if above {
+        readings.extend(rubiyomi_core::gloss::above(page, shown, cfg, &FixedMeasure));
+    }
 }
 
 fn next_chapter_row(state: &ReaderState, index: usize) -> AnyElement {
@@ -1031,7 +1123,8 @@ pub fn screen(id: BookId) -> impl IntoElement {
         let page = state.shared.page;
         // Apart, so the rest of the page's settings don't find the words again.
         let for_furigana = computed(move || page.with(|p| p.furigana == Furigana::Dictionary));
-        effect(move || state.colour(for_furigana.get()));
+        let for_english = computed(move || page.with(|p| p.english != English::Off));
+        effect(move || state.colour(for_furigana.get(), for_english.get()));
     }
     state.watch_skimming();
     #[cfg(not(target_os = "android"))]
@@ -1164,7 +1257,7 @@ mod tests {
     #[test]
     fn opening_a_chapter_again_is_a_new_layout_that_lands_on_its_start() {
         let pages = vec![Page { start: 0, end: 10, ..Page::default() }, Page { start: 10, end: 20, ..Page::default() }];
-        let shown = LaidFor { chapter: 3, opening: 1, cfg: LayoutConfig::default(), typeface: Typeface::Sans, book_ruby: true };
+        let shown = LaidFor { chapter: 3, opening: 1, cfg: LayoutConfig::default(), typeface: Typeface::Sans, book_ruby: true, swaps: 0 };
         assert_ne!(shown, LaidFor { opening: 2, ..shown });
         assert_eq!(landing(&pages, Place::Offset(0)), (0, Place::Offset(0)));
     }

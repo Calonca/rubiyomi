@@ -10,6 +10,7 @@ use std::sync::Arc;
 use nsh_core::prelude::*;
 use rubiyomi_core::cards::CardState;
 use rubiyomi_core::finder::{Finder, Word, jpdb_words_tag, words_tag};
+use rubiyomi_core::gloss::{Gloss, add_kanji, chapter_chars, glosses, studied};
 use rubiyomi_core::grade::{Grader, StateMap};
 use rubiyomi_core::jpdb::JpdbClient;
 use rubiyomi_core::settings::{CustomColours, PageSettings, WordColours, WordPalette};
@@ -105,6 +106,8 @@ pub struct Colours {
     // Sorted by start, in chapter offsets.
     pub words: Arc<Vec<Word>>,
     pub states: StateMap,
+    // The words with a kanji not read yet, with their English, when it is wanted.
+    pub glosses: Arc<Vec<Gloss>>,
     // The card state of each char of the chapter: `ink` runs for every char of every redraw,
     // so it reads this instead of finding the word and hashing its key.
     state_at: Vec<Option<CardState>>,
@@ -120,13 +123,39 @@ impl Colours {
                 chars.fill(Some(*state));
             }
         }
-        Colours { index, tag, words, states, state_at }
+        Colours { index, tag, words, states, glosses: Arc::default(), state_at }
+    }
+
+    pub fn with_glosses(mut self, glosses: Vec<Gloss>) -> Self {
+        self.glosses = Arc::new(glosses);
+        self
+    }
+
+    pub fn gloss_at(&self, offset: usize) -> Option<&Gloss> {
+        let g = &self.glosses[self.glosses.partition_point(|g| g.start <= offset).checked_sub(1)?];
+        (offset < g.start + g.len).then_some(g)
     }
 
     pub fn word_at(&self, offset: usize) -> Option<&Word> {
         let w = &self.words[self.words.partition_point(|w| w.start <= offset).checked_sub(1)?];
         (offset < w.start + w.len).then_some(w)
     }
+}
+
+// The words of a chapter to show in English: those with a kanji found in no word studied, by the
+// reviews service or in this chapter.
+fn english(chapter: &Chapter, words: &[Word], states: &StateMap, grader: Option<&dyn Grader>, finder: Option<&Finder>) -> Vec<Gloss> {
+    let mut readable = grader.map(|g| g.readable_kanji()).unwrap_or_default();
+    for w in words.iter().filter(|w| states.get(&w.key()).is_some_and(|s| studied(*s))) {
+        add_kanji(&mut readable, &w.spelling);
+    }
+    if readable.is_empty() {
+        // Nothing studied, or no service to tell: everything would be English.
+        return Vec::new();
+    }
+    glosses(words, &chapter_chars(chapter), &readable, |w| {
+        w.jmdict_id.and_then(|id| finder?.entry(id)).map(|e| e.senses).unwrap_or_default()
+    })
 }
 
 // A chapter's words, from jpdb.io when it parses, else from the finder on the device; and
@@ -152,6 +181,8 @@ pub struct Words {
     pub grading: Rc<Cell<bool>>,
     prefetched: Rc<RefCell<HashSet<usize>>>,
     told_failed: Rc<Cell<bool>>,
+    // Where the words shown in English that were tapped back to Japanese start.
+    pub revealed: Signal<HashSet<usize>>,
 }
 
 impl Words {
@@ -163,11 +194,22 @@ impl Words {
             grading: Rc::default(),
             prefetched: Rc::default(),
             told_failed: Rc::default(),
+            revealed: signal_with(HashSet::new(), SignalEquals::Never),
         }
     }
 }
 
 type Found = (Colours, Option<String>);
+
+// What asking for fresh states needs; `chapter` only when words are shown in English.
+struct Fresh {
+    job: u64,
+    index: usize,
+    words: Arc<Vec<Word>>,
+    grader: Option<Arc<dyn Grader>>,
+    chapter: Option<Arc<Chapter>>,
+    finder: Option<Arc<Finder>>,
+}
 
 // What the chars of a page are inked with, read once for the page.
 pub struct PageInk {
@@ -211,7 +253,7 @@ impl ReaderState {
 
     // The words of the chapter shown are found aside and saved, so a chapter seen before is
     // coloured at once; the next chapter's are found ahead. Runs in an effect.
-    pub fn colour(&self, for_furigana: bool) {
+    pub fn colour(&self, for_furigana: bool, for_english: bool) {
         let index = self.index.get();
         let chapter = self.chapter.get();
         let finder = self.shared.finder.get().ok();
@@ -236,6 +278,7 @@ impl ReaderState {
         }
         let job = self.words.colouring.get() + 1;
         self.words.colouring.set(job);
+        let (whole, for_fresh) = (chapter.clone(), chapter.clone());
         let chapter = known.is_none().then(|| chapter.clone());
         let (library, id) = (self.shared.library.clone(), self.meta.id.clone());
         let (state, saving) = (self.clone(), tag.clone());
@@ -255,9 +298,12 @@ impl ReaderState {
                     Arc::new(words)
                 });
                 let states = grader_then
+                    .as_ref()
                     .map(|g| g.states(&words))
                     .unwrap_or_else(|| crate::hooks::fake_states(words.iter().map(Word::key), 7).unwrap_or_default());
-                (Colours::new(index, saving, words, states), failed)
+                let glosses =
+                    if for_english { english(&whole, &words, &states, grader_then.as_deref(), finder_then.as_deref()) } else { Vec::new() };
+                (Colours::new(index, saving, words, states).with_glosses(glosses), failed)
             })
             .await;
             let Ok((colours, failed)) = found else { return };
@@ -271,7 +317,8 @@ impl ReaderState {
             }
             let words = colours.words.clone();
             state.words.colours.set(Some(Rc::new(colours)));
-            state.ask_fresh(job, index, words, grader);
+            let fresh = Fresh { job, index, words, grader, chapter: for_english.then_some(for_fresh), finder: finder.clone() };
+            state.ask_fresh(fresh);
             state.prefetch(index + 1, finder, parser);
         });
     }
@@ -285,7 +332,8 @@ impl ReaderState {
     }
 
     // The saved states show at once; fresh ones follow when the reviews service answers.
-    fn ask_fresh(&self, job: u64, index: usize, words: Arc<Vec<Word>>, grader: Option<Arc<dyn Grader>>) {
+    fn ask_fresh(&self, fresh: Fresh) {
+        let Fresh { job, index, words, grader, chapter, finder } = fresh;
         let Some(grader) = grader else { return };
         let state = self.clone();
         spawn(async move {
@@ -295,7 +343,8 @@ impl ReaderState {
                     log::warn!("asking for card states: {e}");
                 }
                 let states = grader.states(&words);
-                Colours::new(index, tag, words, states)
+                let glosses = chapter.map(|c| english(&c, &words, &states, Some(&*grader), finder.as_deref())).unwrap_or_default();
+                Colours::new(index, tag, words, states).with_glosses(glosses)
             })
             .await;
             let Ok(colours) = asked else { return };

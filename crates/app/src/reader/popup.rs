@@ -259,6 +259,9 @@ impl ReaderState {
     // if it is the word shown.
     pub fn look_up(&self, block: usize, offset: usize) {
         self.reading.active();
+        if self.reveal(offset) {
+            return;
+        }
         let shown = self.popup_shows(offset);
         // A click settles a card still waiting to count.
         if let Some(timer) = self.dwell.take() {

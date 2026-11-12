@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use nsh_core::prelude::*;
 use rubiyomi_core::grade::Grader;
-use rubiyomi_core::settings::{Furigana, PageSettings, PageTheme, Typeface, WordColours};
+use rubiyomi_core::settings::{English, Furigana, PageSettings, PageTheme, Typeface, WordColours};
 
 use crate::colours_page;
 use crate::ui::{self, Ripples, c, glyph, page_scheme, scheme};
@@ -102,6 +102,22 @@ pub fn form(
             move || page.with(|p| if p.furigana == Furigana::Blur { Furigana::Show } else { p.furigana }),
             move |v| page.update(|p| p.furigana = v),
         ))
+        .child(ui::segmented(
+            Some("English for unread kanji"),
+            &["Off", "Above", "In place"],
+            &[English::Off, English::Above, English::InPlace],
+            move || page.with(|p| p.english),
+            move |v| page.update(|p| p.english = v),
+        ))
+        .child(dynamic(move || {
+            let no_source = grader.with(|g| g.is_none()) && !crate::hooks::fake_states_on();
+            ui::hint(if no_source {
+                "Needs a reviews service, which tells the kanji you can read: choose one in Settings → Reviews."
+            } else {
+                "Words with a kanji you haven't studied show their English. Tap one for the Japanese."
+            })
+            .into_element()
+        }))
         .child(dynamic(move || {
             if grader.with(|g| g.is_none()) && !crate::hooks::fake_states_on() {
                 return view().into_element();
