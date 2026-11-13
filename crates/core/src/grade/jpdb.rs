@@ -45,6 +45,8 @@ pub struct JpdbGrader {
     deck: String,
     deck_name: String,
     synced: Mutex<HashMap<u64, Vec<Vocabulary>>>,
+    // Kanji asked about as words of their own, and whether studied; asked once a run.
+    kanji: Mutex<HashMap<char, bool>>,
     path: PathBuf,
 }
 
@@ -52,7 +54,14 @@ impl JpdbGrader {
     pub fn new(client: JpdbClient, deck: &str, deck_name: &str, data_dir: &Path) -> Self {
         let path = data_dir.join("jpdb-decks.json");
         let synced = read_json_or_default(&path);
-        JpdbGrader { client, deck: deck.to_owned(), deck_name: deck_name.to_owned(), synced: Mutex::new(synced), path }
+        JpdbGrader {
+            client,
+            deck: deck.to_owned(),
+            deck_name: deck_name.to_owned(),
+            synced: Mutex::new(synced),
+            kanji: Mutex::default(),
+            path,
+        }
     }
 
     fn save(&self, map: &HashMap<u64, Vec<Vocabulary>>) {
@@ -159,7 +168,28 @@ impl Grader for JpdbGrader {
     fn readable_kanji(&self) -> crate::gloss::Readable {
         let synced = self.synced.lock().unwrap_or_else(|e| e.into_inner());
         let studied = synced.values().flatten().filter(|v| crate::gloss::studied(CardState::primary_of(&v.states)));
-        crate::gloss::readable_of(studied.map(|v| v.spelling.as_str()))
+        let mut readable = crate::gloss::readable_of(studied.map(|v| v.spelling.as_str()));
+        let kanji = self.kanji.lock().unwrap_or_else(|e| e.into_inner());
+        readable.extend(kanji.iter().filter(|(_, studied)| **studied).map(|(k, _)| *k));
+        readable
+    }
+
+    fn ask_kanji(&self, kanji: &[char]) -> Result<(), GradeError> {
+        let new: Vec<char> = {
+            let asked = self.kanji.lock().unwrap_or_else(|e| e.into_inner());
+            kanji.iter().copied().filter(|k| !asked.contains_key(k)).collect()
+        };
+        if new.is_empty() {
+            return Ok(());
+        }
+        let found: HashMap<char, bool> =
+            self.client.kanji_states(&new)?.into_iter().map(|(k, s)| (k, crate::gloss::studied(CardState::primary_of(&s)))).collect();
+        let mut asked = self.kanji.lock().unwrap_or_else(|e| e.into_inner());
+        for k in new {
+            let studied = found.get(&k).copied().unwrap_or(false);
+            asked.insert(k, studied);
+        }
+        Ok(())
     }
 
     fn refresh(&self, words: &[Word]) -> Result<(), GradeError> {

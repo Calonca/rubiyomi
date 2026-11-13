@@ -10,7 +10,7 @@ use std::sync::Arc;
 use nsh_core::prelude::*;
 use rubiyomi_core::cards::CardState;
 use rubiyomi_core::finder::{Finder, Word, jpdb_words_tag, words_tag};
-use rubiyomi_core::gloss::{Gloss, Readable, add_kanji, chapter_chars, glosses, still_unread, studied};
+use rubiyomi_core::gloss::{Gloss, Readable, add_kanji, chapter_chars, glosses, kanji_to_ask, still_unread, studied};
 use rubiyomi_core::grade::{Grader, StateMap};
 use rubiyomi_core::jpdb::JpdbClient;
 use rubiyomi_core::settings::{CustomColours, PageSettings, WordColours, WordPalette};
@@ -371,6 +371,12 @@ impl ReaderState {
             let asked = blocking(move || {
                 if let Err(e) = grader.refresh(&words) {
                     log::warn!("asking for card states: {e}");
+                }
+                if let Some(c) = &chapter {
+                    let unread = kanji_to_ask(&chapter_chars(c), &grader.readable_kanji());
+                    if let Err(e) = grader.ask_kanji(&unread) {
+                        log::warn!("asking for the kanji's states: {e}");
+                    }
                 }
                 let states = grader.states(&words);
                 let glosses = chapter.map(|c| english(&c, &words, &states, Some(&*grader), finder.as_deref())).unwrap_or_default();

@@ -99,6 +99,12 @@ pub struct Gloss {
 }
 
 // The chars of a chapter, at chapter offsets; an image counts one.
+// The chapter's kanji not yet read, each once, in the order met.
+pub fn kanji_to_ask(chars: &[char], readable: &Readable) -> Vec<char> {
+    let mut seen = Readable::new();
+    chars.iter().copied().filter(|c| is_real_kanji(*c) && !readable.contains(c) && seen.insert(*c)).collect()
+}
+
 pub fn chapter_chars(chapter: &Chapter) -> Vec<char> {
     let mut out = Vec::with_capacity(chapter.char_len());
     for b in &chapter.blocks {

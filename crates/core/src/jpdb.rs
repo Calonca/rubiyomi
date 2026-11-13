@@ -178,6 +178,27 @@ impl JpdbClient {
             .collect())
     }
 
+    // The states of these kanji as words of their own: one request, the kanji apart by spaces.
+    // Kanji that are no word alone (most verb stems) don't come back.
+    pub fn kanji_states(&self, kanji: &[char]) -> Result<Vec<(char, Vec<CardState>)>, JpdbError> {
+        let mut out = Vec::new();
+        // Well under the size jpdb.io takes in one text.
+        for chunk in kanji.chunks(1500) {
+            let text = chunk.iter().map(char::to_string).collect::<Vec<_>>().join(" ");
+            let json = self.post(
+                "parse",
+                json!({
+                    "text": [text],
+                    "token_fields": ["vocabulary_index", "position", "length"],
+                    "vocabulary_fields": ["spelling", "card_state"],
+                    "position_length_encoding": "utf32",
+                }),
+            )?;
+            out.extend(single_kanji(&json, &text));
+        }
+        Ok(out)
+    }
+
     // The words of each text as jpdb.io finds them, at char offsets into it, with
     // their meanings: the reader's words when jpdb.io does the parsing.
     pub fn parse_words(&self, texts: &[String]) -> Result<Vec<Vec<crate::finder::Word>>, JpdbError> {
@@ -350,6 +371,23 @@ fn plain(v: &Value) -> String {
     }
 }
 
+fn single_kanji(json: &Value, text: &str) -> Vec<(char, Vec<CardState>)> {
+    let chars: Vec<char> = text.chars().collect();
+    let vocabulary = rows(json, "vocabulary");
+    let tokens = json.pointer("/tokens/0").and_then(Value::as_array).cloned().unwrap_or_default();
+    tokens
+        .iter()
+        .filter_map(Value::as_array)
+        .filter_map(|t| {
+            let v = vocabulary.get(t.first()?.as_u64()? as usize)?;
+            let (at, len) = (t.get(1)?.as_u64()? as usize, t.get(2)?.as_u64()?);
+            let kanji = *chars.get(at)?;
+            // A longer word, or one jpdb.io spells otherwise, says nothing about this kanji.
+            (len == 1 && text_at(v, 0) == kanji.to_string()).then(|| (kanji, states(v.get(1))))
+        })
+        .collect()
+}
+
 fn states(v: Option<&Value>) -> Vec<CardState> {
     v.and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_str).map(CardState::from_wire).collect()).unwrap_or_default()
 }
@@ -386,6 +424,25 @@ fn split_text(text: &str, at: usize) -> (Located, Located) {
 mod tests {
     use super::*;
     use crate::http::{Mock, Response};
+
+    #[test]
+    fn single_kanji_come_back_with_their_states_and_nothing_else_counts() {
+        // Hand-written: 猫 known, 名 new, 思 no word alone, 前 taken for another word.
+        let mock = Mock::new(|r| {
+            let body: Value = serde_json::from_str(&r.body).unwrap();
+            assert_eq!(body["text"], json!(["猫 名 思 前"]));
+            Ok(Response::ok(
+                json!({
+                    "tokens": [[[0, 0, 1], [1, 2, 1], [2, 6, 1]]],
+                    "vocabulary": [["猫", ["known"]], ["名", ["locked", "new"]], ["前々", ["known"]]],
+                })
+                .to_string(),
+            ))
+        });
+        let client = JpdbClient::with_transport("key", mock);
+        let found = client.kanji_states(&['猫', '名', '思', '前']).unwrap();
+        assert_eq!(found, vec![('猫', vec![CardState::Known]), ('名', vec![CardState::Locked, CardState::New])]);
+    }
 
     #[test]
     fn parsed_words_sit_at_char_offsets_with_their_meanings() {
