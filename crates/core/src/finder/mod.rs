@@ -132,6 +132,10 @@ impl Finder {
         self.jmdict.lock().unwrap_or_else(|e| e.into_inner()).entry(id)
     }
 
+    pub fn words_of_kanji(&self, kanji: &[char], per: usize) -> Vec<(char, String)> {
+        self.jmdict.lock().unwrap_or_else(|e| e.into_inner()).words_of_kanji(kanji, per)
+    }
+
     pub fn word_at(&self, text: &str, at: usize) -> Option<Word> {
         let merged = merge(&self.morphs(text));
         let w = merged.into_iter().find(|w| (w.start..w.start + w.len).contains(&at))?;

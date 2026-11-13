@@ -76,11 +76,12 @@ pub trait Grader: Send + Sync {
         crate::gloss::Readable::new()
     }
 
-    // Asks, in one go for them all, which of these kanji are studied as words of their own, for
-    // the next `readable_kanji`. Only for a service that tells states just of the words asked
-    // for: a synced deck already holds every word, single kanji included.
-    fn ask_kanji(&self, kanji: &[char]) -> Result<(), GradeError> {
-        let _ = kanji;
+    // Asks, in one go for them all, whether these words standing for a kanji (the kanji alone,
+    // or a common word whose only kanji it is) are studied, for the next `readable_kanji`. Only
+    // for a service that tells states just of the words asked for: a synced deck already holds
+    // every word.
+    fn ask_kanji(&self, words: &[(char, String)]) -> Result<(), GradeError> {
+        let _ = words;
         Ok(())
     }
 

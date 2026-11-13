@@ -174,20 +174,23 @@ impl Grader for JpdbGrader {
         readable
     }
 
-    fn ask_kanji(&self, kanji: &[char]) -> Result<(), GradeError> {
-        let new: Vec<char> = {
+    fn ask_kanji(&self, words: &[(char, String)]) -> Result<(), GradeError> {
+        let new: Vec<(char, String)> = {
             let asked = self.kanji.lock().unwrap_or_else(|e| e.into_inner());
-            kanji.iter().copied().filter(|k| !asked.contains_key(k)).collect()
+            words.iter().filter(|(k, _)| !asked.contains_key(k)).cloned().collect()
         };
         if new.is_empty() {
             return Ok(());
         }
-        let found: HashMap<char, bool> =
-            self.client.kanji_states(&new)?.into_iter().map(|(k, s)| (k, crate::gloss::studied(CardState::primary_of(&s)))).collect();
+        let found = self.client.kanji_states(&new)?;
         let mut asked = self.kanji.lock().unwrap_or_else(|e| e.into_inner());
-        for k in new {
-            let studied = found.get(&k).copied().unwrap_or(false);
-            asked.insert(k, studied);
+        for (k, _) in &new {
+            asked.entry(*k).or_insert(false);
+        }
+        for (k, states) in found {
+            if crate::gloss::studied(CardState::primary_of(&states)) {
+                asked.insert(k, true);
+            }
         }
         Ok(())
     }

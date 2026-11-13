@@ -20,7 +20,7 @@ pub fn studied(state: CardState) -> bool {
 }
 
 // A kanji to know, leaving out the repeat and abbreviation marks, which read as what they stand for.
-fn is_real_kanji(c: char) -> bool {
+pub(crate) fn is_real_kanji(c: char) -> bool {
     is_kanji(c) && !matches!(c, '々' | '〆' | 'ヶ' | 'ヵ')
 }
 

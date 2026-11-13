@@ -253,6 +253,31 @@ impl Jmdict {
         .unwrap_or_default()
     }
 
+    // Up to `per` common forms for each kanji whose only kanji it is (泣 → 泣く), shortest first:
+    // the dictionary marks words common but doesn't rank them.
+    pub fn words_of_kanji(&self, kanji: &[char], per: usize) -> Vec<(char, String)> {
+        let wanted: std::collections::HashSet<char> = kanji.iter().copied().collect();
+        let Ok(mut st) = self.conn.prepare_cached("SELECT DISTINCT surface FROM form WHERE common = 1") else { return Vec::new() };
+        let mut found: std::collections::HashMap<char, Vec<String>> = std::collections::HashMap::new();
+        let Ok(rows) = st.query_map([], |r| r.get::<_, String>(0)) else { return Vec::new() };
+        for surface in rows.flatten() {
+            let mut only = surface.chars().filter(|c| crate::gloss::is_real_kanji(*c));
+            if let (Some(k), None) = (only.next(), only.next())
+                && wanted.contains(&k)
+                && surface.chars().count() > 1
+            {
+                found.entry(k).or_default().push(surface);
+            }
+        }
+        let mut out = Vec::new();
+        for k in kanji {
+            let mut forms = found.remove(k).unwrap_or_default();
+            forms.sort_by(|a, b| a.chars().count().cmp(&b.chars().count()).then_with(|| a.cmp(b)));
+            out.extend(forms.into_iter().take(per).map(|f| (*k, f)));
+        }
+        out
+    }
+
     pub fn entry(&self, id: u32) -> Option<Entry> {
         let split = |s: String, sep: char| s.split(sep).filter(|x| !x.is_empty()).map(str::to_owned).collect::<Vec<_>>();
         self.conn

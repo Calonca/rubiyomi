@@ -178,13 +178,14 @@ impl JpdbClient {
             .collect())
     }
 
-    // The states of these kanji as words of their own: one request, the kanji apart by spaces.
-    // Kanji that are no word alone (most verb stems) don't come back.
-    pub fn kanji_states(&self, kanji: &[char]) -> Result<Vec<(char, Vec<CardState>)>, JpdbError> {
+    // The states of words standing for a kanji (the kanji alone, or a word whose only kanji it
+    // is): one request, the words apart by spaces. Kanji that are no word alone (most verb
+    // stems) don't come back by themselves.
+    pub fn kanji_states(&self, words: &[(char, String)]) -> Result<Vec<(char, Vec<CardState>)>, JpdbError> {
         let mut out = Vec::new();
         // Well under the size jpdb.io takes in one text.
-        for chunk in kanji.chunks(1500) {
-            let text = chunk.iter().map(char::to_string).collect::<Vec<_>>().join(" ");
+        for chunk in words.chunks(1000) {
+            let text = chunk.iter().map(|(_, w)| w.as_str()).collect::<Vec<_>>().join(" ");
             let json = self.post(
                 "parse",
                 json!({
@@ -194,7 +195,7 @@ impl JpdbClient {
                     "position_length_encoding": "utf32",
                 }),
             )?;
-            out.extend(single_kanji(&json, &text));
+            out.extend(kanji_words(&json, chunk));
         }
         Ok(out)
     }
@@ -371,8 +372,14 @@ fn plain(v: &Value) -> String {
     }
 }
 
-fn single_kanji(json: &Value, text: &str) -> Vec<(char, Vec<CardState>)> {
-    let chars: Vec<char> = text.chars().collect();
+fn kanji_words(json: &Value, words: &[(char, String)]) -> Vec<(char, Vec<CardState>)> {
+    let mut starts = std::collections::HashMap::new();
+    let mut at = 0;
+    for (kanji, word) in words {
+        let len = word.chars().count();
+        starts.insert(at, (*kanji, len));
+        at += len + 1;
+    }
     let vocabulary = rows(json, "vocabulary");
     let tokens = json.pointer("/tokens/0").and_then(Value::as_array).cloned().unwrap_or_default();
     tokens
@@ -380,10 +387,9 @@ fn single_kanji(json: &Value, text: &str) -> Vec<(char, Vec<CardState>)> {
         .filter_map(Value::as_array)
         .filter_map(|t| {
             let v = vocabulary.get(t.first()?.as_u64()? as usize)?;
-            let (at, len) = (t.get(1)?.as_u64()? as usize, t.get(2)?.as_u64()?);
-            let kanji = *chars.get(at)?;
-            // A longer word, or one jpdb.io spells otherwise, says nothing about this kanji.
-            (len == 1 && text_at(v, 0) == kanji.to_string()).then(|| (kanji, states(v.get(1))))
+            let (kanji, len) = *starts.get(&(t.get(1)?.as_u64()? as usize))?;
+            // Only a word jpdb.io took whole, and spelt with the kanji, tells about it.
+            (t.get(2)?.as_u64()? as usize == len && text_at(v, 0).contains(kanji)).then(|| (kanji, states(v.get(1))))
         })
         .collect()
 }
@@ -426,22 +432,23 @@ mod tests {
     use crate::http::{Mock, Response};
 
     #[test]
-    fn single_kanji_come_back_with_their_states_and_nothing_else_counts() {
-        // Hand-written: 猫 known, 名 new, 思 no word alone, 前 taken for another word.
+    fn a_kanji_takes_the_states_of_the_words_that_stand_for_it() {
+        // Hand-written: 猫 known; 思 no word alone but 思う due; 泣く cut in two.
         let mock = Mock::new(|r| {
             let body: Value = serde_json::from_str(&r.body).unwrap();
-            assert_eq!(body["text"], json!(["猫 名 思 前"]));
+            assert_eq!(body["text"], json!(["猫 思 思う 泣く"]));
             Ok(Response::ok(
                 json!({
-                    "tokens": [[[0, 0, 1], [1, 2, 1], [2, 6, 1]]],
-                    "vocabulary": [["猫", ["known"]], ["名", ["locked", "new"]], ["前々", ["known"]]],
+                    "tokens": [[[0, 0, 1], [1, 4, 2], [2, 7, 1], [3, 8, 1]]],
+                    "vocabulary": [["猫", ["known"]], ["思う", ["due"]], ["泣", ["known"]], ["く", ["known"]]],
                 })
                 .to_string(),
             ))
         });
         let client = JpdbClient::with_transport("key", mock);
-        let found = client.kanji_states(&['猫', '名', '思', '前']).unwrap();
-        assert_eq!(found, vec![('猫', vec![CardState::Known]), ('名', vec![CardState::Locked, CardState::New])]);
+        let words = [('猫', "猫"), ('思', "思"), ('思', "思う"), ('泣', "泣く")].map(|(k, w)| (k, w.to_owned()));
+        let found = client.kanji_states(&words).unwrap();
+        assert_eq!(found, vec![('猫', vec![CardState::Known]), ('思', vec![CardState::Due])]);
     }
 
     #[test]

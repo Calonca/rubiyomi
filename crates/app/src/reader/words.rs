@@ -374,7 +374,10 @@ impl ReaderState {
                 }
                 if let Some(c) = &chapter {
                     let unread = kanji_to_ask(&chapter_chars(c), &grader.readable_kanji());
-                    if let Err(e) = grader.ask_kanji(&unread) {
+                    let mut asked: Vec<(char, String)> = unread.iter().map(|k| (*k, k.to_string())).collect();
+                    // Most verb and adjective stems are no word alone: their commonest words stand for them.
+                    asked.extend(finder.as_deref().map(|f| f.words_of_kanji(&unread, 2)).unwrap_or_default());
+                    if let Err(e) = grader.ask_kanji(&asked) {
                         log::warn!("asking for the kanji's states: {e}");
                     }
                 }
