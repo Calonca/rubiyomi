@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# Builds the GTK 4 window (with the dev-hooks feature, which tool/headless.sh needs) with mold, against
-# the headers tool/gtk-dev.sh unpacks: target/desktop/fast/rubiyomi.
+# Builds the GTK 4 window (with the dev-hooks feature, which tool/headless.sh needs) against the
+# system's GTK 4 headers or those tool/gtk-dev.sh unpacks: target/desktop/fast/rubiyomi.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . tool/gtk-env.sh
