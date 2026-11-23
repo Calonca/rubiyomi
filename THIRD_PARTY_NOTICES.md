@@ -133,6 +133,9 @@ The app draws its screens with NSH, <https://github.com/longbridge/native-shell>
 licensed under the Apache License, Version 2.0:
 <https://www.apache.org/licenses/LICENSE-2.0>. On Android it also ships NSH's
 Java runtime classes, under the same licence. Settings → About credits it.
+Among them is NSH's Java port of rustls-platform-verifier's Android component,
+copyright the rustls-platform-verifier authors (MIT OR Apache-2.0,
+<https://github.com/rustls/rustls-platform-verifier>).
 
 ## Material Color Utilities
 
