@@ -17,13 +17,20 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.LocaleList;
 import android.util.DisplayMetrics;
+import android.view.ActionMode;
 import android.view.DisplayCutout;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -169,6 +176,16 @@ public final class Bridge extends Application implements Application.ActivityLif
         }
     }
 
+    // NSH shows the status bar again on a rotation or a change of theme. A swipe's bars aren't visible here.
+    private static void keepFullScreen(Activity a) {
+        a.getWindow().getDecorView().setOnApplyWindowInsetsListener((view, insets) -> {
+            if (fullScreen && (Build.VERSION.SDK_INT < 30 || insets.isVisible(WindowInsets.Type.statusBars()))) {
+                view.post(() -> applyFullScreen(a));
+            }
+            return view.onApplyWindowInsets(insets);
+        });
+    }
+
     // Material You's accent, or -1 before Android 12, which has none.
     public static int accentColor() {
         if (Build.VERSION.SDK_INT < 31) {
@@ -250,6 +267,74 @@ public final class Bridge extends Application implements Application.ActivityLif
         WindowManager.LayoutParams params = a.getWindow().getAttributes();
         params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         a.getWindow().setAttributes(params);
+        translateFirst(a.getWindow());
+        keepFullScreen(a);
+    }
+
+    // NSH's selection menu lists Copy, Select all and Share, then the apps' text actions, with
+    // no say in the order. Its window hears of each menu as it opens, so there the menu is laid
+    // out again with Translate first; NSH still handles every item, by its id and intent.
+    private static void translateFirst(Window window) {
+        Window.Callback inner = window.getCallback();
+        if (inner == null || Proxy.isProxyClass(inner.getClass())) {
+            return;
+        }
+        window.setCallback((Window.Callback) Proxy.newProxyInstance(Window.Callback.class.getClassLoader(),
+                new Class<?>[] {Window.Callback.class}, (proxy, method, args) -> {
+                    Object result;
+                    try {
+                        result = method.invoke(inner, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                    if (method.getName().equals("onActionModeStarted") && args != null && args[0] instanceof ActionMode) {
+                        reorder((ActionMode) args[0]);
+                    }
+                    return result;
+                }));
+    }
+
+    private static boolean isTranslate(MenuItem item) {
+        Intent intent = item.getIntent();
+        if (intent == null || !Intent.ACTION_PROCESS_TEXT.equals(intent.getAction()) || intent.getComponent() == null) {
+            return false;
+        }
+        // The app's package and activity too: the label is in the phone's language.
+        String names = intent.getComponent().flattenToString() + " " + item.getTitle();
+        return names.toLowerCase(Locale.ROOT).contains("translat");
+    }
+
+    private static void reorder(ActionMode mode) {
+        Menu menu = mode.getMenu();
+        List<MenuItem> items = new ArrayList<>();
+        int translate = -1;
+        for (int i = 0; i < menu.size(); i++) {
+            MenuItem item = menu.getItem(i);
+            items.add(item);
+            if (translate < 0 && isTranslate(item)) {
+                translate = i;
+            }
+        }
+        if (translate <= 0) {
+            return;
+        }
+        items.add(0, items.remove(translate));
+        // Snapshots: the items go with the clear.
+        List<Object[]> kept = new ArrayList<>();
+        for (MenuItem item : items) {
+            kept.add(new Object[] {item.getGroupId(), item.getItemId(), item.getTitle(), item.getIntent(), item.isVisible(),
+                item.getAlphabeticShortcut()});
+        }
+        menu.clear();
+        for (Object[] k : kept) {
+            // One order for all: equal orders keep the order they were added in.
+            MenuItem item = menu.add((int) k[0], (int) k[1], 0, (CharSequence) k[2]);
+            item.setIntent((Intent) k[3]).setVisible((boolean) k[4]).setAlphabeticShortcut((char) k[5]);
+            if (k[3] != null) {
+                item.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+            }
+        }
+        mode.invalidate();
     }
 
     @Override

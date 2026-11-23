@@ -10,7 +10,7 @@ Rust reader for Japanese books, on native views through NSH: Linux (GTK 4), Wind
   colour schemes. HTTP goes through `http::Transport`, so tests answer with
   hand-written JSON. Unit tests live next to the code; test EPUBs are built in
   code (`testing.rs`).
-- `crates/app` — the app, on NSH (native-shell, pinned by git rev in its Cargo.toml). Desktop
+- `crates/app` — the app, on NSH (native-shell, from crates.io). Desktop
   is feature `desktop` (GTK 4 on Linux), Android a cdylib with Java glue in
   `crates/app/android/` (`Bridge`, `AnkiDroidBridge` for AnkiDroid, `Secrets` keeping keys
   encrypted with the Android Keystore), its manifest and resources. Data in

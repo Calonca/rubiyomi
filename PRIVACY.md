@@ -1,6 +1,6 @@
 # Rubiyomi privacy policy
 
-Last updated: 8 November 2026.
+Last updated: 23 November 2026.
 
 Rubiyomi collects no data. It has no account, no analytics, no ads and no
 crash reporting, and its author receives nothing from it.
@@ -37,7 +37,7 @@ on its own:
 - **Not on Android.** The Android app has no update check: the Play Store
   updates it.
 
-## What leaves your device, and only if you set it up
+## What leaves your device, and only if you choose it
 
 - **jpdb.io.** If you choose jpdb.io for reviews, Rubiyomi sends your API key
   and the words of the chapter you are reading to jpdb.io, to colour them by
@@ -55,6 +55,9 @@ on its own:
   on the device to colour words; nothing from your books is sent. When you
   grade a word, it sends that review (the item and whether you got it right).
   WaniKani's own privacy policy applies to what it receives.
+- **Selected text.** If you choose Translate, Share or another app's action for
+  text you selected on Android, that text goes to that app, whose own privacy
+  policy applies.
 - **Links.** "Open on jpdb.io", "Open on WaniKani" and other links open in your browser.
 
 The dictionary is bundled with the app, so unless you choose jpdb.io for
