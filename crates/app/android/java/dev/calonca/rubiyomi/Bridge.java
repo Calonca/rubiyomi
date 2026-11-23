@@ -176,6 +176,16 @@ public final class Bridge extends Application implements Application.ActivityLif
         }
     }
 
+    // NSH shows the status bar again on a rotation or a change of theme. A swipe's bars aren't visible here.
+    private static void keepFullScreen(Activity a) {
+        a.getWindow().getDecorView().setOnApplyWindowInsetsListener((view, insets) -> {
+            if (fullScreen && (Build.VERSION.SDK_INT < 30 || insets.isVisible(WindowInsets.Type.statusBars()))) {
+                view.post(() -> applyFullScreen(a));
+            }
+            return view.onApplyWindowInsets(insets);
+        });
+    }
+
     // Material You's accent, or -1 before Android 12, which has none.
     public static int accentColor() {
         if (Build.VERSION.SDK_INT < 31) {
@@ -258,6 +268,7 @@ public final class Bridge extends Application implements Application.ActivityLif
         params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         a.getWindow().setAttributes(params);
         translateFirst(a.getWindow());
+        keepFullScreen(a);
     }
 
     // NSH's selection menu lists Copy, Select all and Share, then the apps' text actions, with
@@ -288,8 +299,9 @@ public final class Bridge extends Application implements Application.ActivityLif
         if (intent == null || !Intent.ACTION_PROCESS_TEXT.equals(intent.getAction()) || intent.getComponent() == null) {
             return false;
         }
-        String app = intent.getComponent().getPackageName();
-        return app.contains("translat") || String.valueOf(item.getTitle()).toLowerCase(java.util.Locale.ROOT).contains("translat");
+        // The app's package and activity too: the label is in the phone's language.
+        String names = intent.getComponent().flattenToString() + " " + item.getTitle();
+        return names.toLowerCase(Locale.ROOT).contains("translat");
     }
 
     private static void reorder(ActionMode mode) {
