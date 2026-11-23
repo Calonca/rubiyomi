@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use nsh_core::file_dialog::FileFilter;
-use nsh_core::picker::FilePickRequest;
+use nsh_core::picker::{FilePickRequest, PickedStatus};
 use nsh_core::prelude::*;
 #[cfg(target_os = "android")]
 use rubiyomi_core::grade::anki::AnkiBackend;
@@ -196,6 +196,10 @@ impl Platform for NshPlatform {
             let picked = pick_files(FilePickRequest::new(true, 0).filter(FileFilter::new("EPUB", ["epub"]))).await;
             let _ = std::fs::create_dir_all(&dir);
             for file in picked {
+                if file.status != PickedStatus::Read {
+                    Self::push(&events, PlatformEvent::ImportFailed(format!("{} is too large", file.name)));
+                    continue;
+                }
                 let path = dir.join(format!("{}.epub", PICKED.fetch_add(1, Ordering::Relaxed)));
                 let event = match std::fs::write(&path, file.data.bytes()) {
                     Ok(()) => PlatformEvent::Imported { path, name: file.name, temporary: true },
